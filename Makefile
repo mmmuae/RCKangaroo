@@ -1,9 +1,28 @@
 CC := g++
-NVCC := /usr/local/cuda-12.0/bin/nvcc
-CUDA_PATH ?= /usr/local/cuda-12.0
+
+# Respect CUDA_HOME/CUDA_PATH from the environment but default to /usr/local/cuda
+DEFAULT_CUDA_PATH := $(if $(CUDA_HOME),$(CUDA_HOME),/usr/local/cuda)
+CUDA_PATH ?= $(DEFAULT_CUDA_PATH)
+
+# nvcc can also be overridden from the environment.  When not explicitly set we
+# fall back to $(CUDA_PATH)/bin/nvcc and finally to whatever nvcc is on PATH.
+NVCC ?= $(CUDA_PATH)/bin/nvcc
+ifeq (,$(wildcard $(NVCC)))
+NVCC := $(shell which nvcc 2>/dev/null)
+CUDA_PATH := $(dir $(dir $(NVCC)))
+endif
+ifeq (,$(NVCC))
+$(error "nvcc not found. Set CUDA_PATH or NVCC to a valid CUDA installation")
+endif
 
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
-NVCCFLAGS := -O3 -gencode=arch=compute_89,code=compute_89 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_61,code=compute_61
+NVCCFLAGS := -O3 \
+    -gencode=arch=compute_120,code=sm_120 \
+    -gencode=arch=compute_90,code=sm_90 \
+    -gencode=arch=compute_89,code=sm_89 \
+    -gencode=arch=compute_86,code=sm_86 \
+    -gencode=arch=compute_75,code=sm_75 \
+    -gencode=arch=compute_61,code=sm_61
 LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -pthread
 
 CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
