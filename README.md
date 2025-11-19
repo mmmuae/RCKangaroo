@@ -53,6 +53,15 @@ Even if you already have a faster implementation of kangaroo jumps, incorporatin
 While adding the necessary loop-handling code will cause you to lose about 5–15% of your current speed, the SOTA method itself will provide a 40% performance increase. 
 Overall, this translates to roughly a 25% net improvement, which should not be ignored if your goal is to build a truly fast solver. 
 
+make CUDA_PATH=/usr/local/cuda-12.8 NVCC=/usr/local/cuda-12.8/bin/nvcc
+./rckangaroo                # benchmark mode
+./rckangaroo -dp 16 -range 84 -start 1000000000000000000000 -pubkey 0329c4...83e73a
+
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+nvcc --version
+
 
 <b>Changelog:</b>
 
@@ -76,5 +85,6 @@ v1.1:
 - added ability to start software on 30xx cards.
 
 v1.0:
+
 
 - initial release.
