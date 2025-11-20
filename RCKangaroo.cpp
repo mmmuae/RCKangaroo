@@ -4,6 +4,7 @@
 // https://github.com/RetiredC
 
 
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <unordered_set>
@@ -205,7 +206,32 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
-        std::unordered_set<std::string> prefilter;
+        struct BatchSig
+        {
+                u8 x[12];
+                u8 d[22];
+                u8 type;
+
+                bool operator==(const BatchSig& other) const
+                {
+                        return memcmp(this, &other, sizeof(BatchSig)) == 0;
+                }
+        };
+
+        struct BatchSigHash
+        {
+                size_t operator()(const BatchSig& sig) const noexcept
+                {
+                        // Use the low limbs of X and distance for a compact hash.
+                        size_t h1, h2, h3;
+                        memcpy(&h1, sig.x, sizeof(size_t));
+                        memcpy(&h2, sig.d, sizeof(size_t));
+                        memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
+                        return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
+                }
+        };
+
+        std::unordered_set<BatchSig, BatchSigHash> prefilter;
         prefilter.reserve(cnt * 2);
 
         for (int i = 0; i < cnt; i++)
@@ -216,14 +242,13 @@ void CheckNewPoints()
                 memcpy(nrec.d, p + 16, 22);
                 nrec.type = gGenMode ? TAME : p[40];
 
+                BatchSig sig{};
+                memcpy(sig.x, p, sizeof(sig.x));
+                memcpy(sig.d, p + 16, sizeof(sig.d));
+                sig.type = nrec.type;
                 // Cheap duplicate filter: avoid running the full DB + collision
                 // logic multiple times for identical (x, d, type) triples coming
                 // from the same GPU batch.
-                std::string sig;
-                sig.reserve(35);
-                sig.append(reinterpret_cast<char*>(p), 12); // X
-                sig.append(reinterpret_cast<char*>(p) + 16, 22); // distance
-                sig.push_back(static_cast<char>(nrec.type));
                 if (!prefilter.insert(sig).second)
                         continue;
 
