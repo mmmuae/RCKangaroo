@@ -282,16 +282,16 @@ void RCGpuKang::Stop()
 
 void RCGpuKang::GenerateRndDistances()
 {
-	for (int i = 0; i < KangCnt; i++)
-	{
-		EcInt d;
-		if (i < KangCnt / 3)
-			d.RndBits(Range - 4); //TAME kangs
-		else
-		{
-			d.RndBits(Range - 1);
-			d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
-		}
+        for (int i = 0; i < KangCnt; i++)
+        {
+                EcInt d;
+                if (i < KangCnt / 3)
+                        d.RndBits(Range); //TAME kangs spread across full range
+                else
+                {
+                        d.RndBits(Range - 1);
+                        d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
+                }
 		memcpy(RndPnts[i].priv, d.data, 24);
 	}
 }
