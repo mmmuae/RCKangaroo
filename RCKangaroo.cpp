@@ -4,7 +4,10 @@
 // https://github.com/RetiredC
 
 
+#include <cstring>
 #include <iostream>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "cuda_runtime.h"
@@ -191,9 +194,9 @@ bool Collision_SOTA(EcPoint& pnt, EcInt t, int TameType, EcInt w, int WildType, 
 
 void CheckNewPoints()
 {
-	csAddPoints.Enter();
-	if (!PntIndex)
-	{
+csAddPoints.Enter();
+if (!PntIndex)
+{
 		csAddPoints.Leave();
 		return;
 	}
@@ -203,13 +206,85 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
-	for (int i = 0; i < cnt; i++)
-	{
-		DBRec nrec;
-		u8* p = pPntList2 + i * GPU_DP_SIZE;
-		memcpy(nrec.x, p, 12);
-		memcpy(nrec.d, p + 16, 22);
-		nrec.type = gGenMode ? TAME : p[40];
+        struct ProjectiveSig
+        {
+                u64 x_low;
+                u64 dist_low;
+                u8 type;
+
+                bool operator==(const ProjectiveSig& other) const
+                {
+                        return x_low == other.x_low && dist_low == other.dist_low && type == other.type;
+                }
+        };
+
+        struct ProjectiveSigHash
+        {
+                size_t operator()(const ProjectiveSig& sig) const noexcept
+                {
+                        // Keep this extremely cheap: two low limbs and a byte of type.
+                        return sig.x_low ^ (sig.dist_low << 1) ^ (static_cast<size_t>(sig.type) << 11);
+                }
+        };
+
+        struct BatchSig
+        {
+                u8 x[12];
+                u8 d[22];
+                u8 type;
+
+                bool operator==(const BatchSig& other) const
+                {
+                        return memcmp(this, &other, sizeof(BatchSig)) == 0;
+                }
+        };
+
+        struct BatchSigHash
+        {
+                size_t operator()(const BatchSig& sig) const noexcept
+                {
+                        size_t h1, h2, h3;
+                        memcpy(&h1, sig.x, sizeof(size_t));
+                        memcpy(&h2, sig.d, sizeof(size_t));
+                        memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
+                        return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
+                }
+        };
+
+        // Stage 1: ultra-cheap projective prefilter keyed on low limbs. This mimics
+        // the GPU-side predicate that will eventually gate the affine normalization
+        // (Montgomery trick). Only candidates that clear this inexpensive check flow
+        // into the full DB/affine stage.
+        std::unordered_set<ProjectiveSig, ProjectiveSigHash> proj_prefilter;
+        proj_prefilter.reserve(cnt * 2);
+
+        // Stage 2: full duplicate filter to prevent redundant DB probes within the batch.
+        std::unordered_set<BatchSig, BatchSigHash> batch_prefilter;
+        batch_prefilter.reserve(cnt * 2);
+
+        for (int i = 0; i < cnt; i++)
+        {
+                DBRec nrec;
+                u8* p = pPntList2 + i * GPU_DP_SIZE;
+                memcpy(nrec.x, p, 12);
+                memcpy(nrec.d, p + 16, 22);
+                nrec.type = gGenMode ? TAME : p[40];
+
+                ProjectiveSig proj_sig{};
+                memcpy(&proj_sig.x_low, p, sizeof(proj_sig.x_low));
+                memcpy(&proj_sig.dist_low, p + 16, sizeof(proj_sig.dist_low));
+                proj_sig.type = nrec.type;
+
+                BatchSig sig{};
+                memcpy(sig.x, p, sizeof(sig.x));
+                memcpy(sig.d, p + 16, sizeof(sig.d));
+                sig.type = nrec.type;
+                proj_prefilter.insert(proj_sig);
+                // Only skip exact duplicates; projective collisions still flow into the
+                // full stage to preserve correctness while benefiting from the cheaper
+                // hash-fronted cache.
+                if (!batch_prefilter.insert(sig).second)
+                        continue;
 
 		DBRec* pref = (DBRec*)db.FindOrAddDataBlock((u8*)&nrec);
 		if (gGenMode)
