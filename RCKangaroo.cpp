@@ -206,6 +206,27 @@ if (!PntIndex)
 	PntIndex = 0;
 	csAddPoints.Leave();
 
+        struct ProjectiveSig
+        {
+                u64 x_low;
+                u64 dist_low;
+                u8 type;
+
+                bool operator==(const ProjectiveSig& other) const
+                {
+                        return x_low == other.x_low && dist_low == other.dist_low && type == other.type;
+                }
+        };
+
+        struct ProjectiveSigHash
+        {
+                size_t operator()(const ProjectiveSig& sig) const noexcept
+                {
+                        // Keep this extremely cheap: two low limbs and a byte of type.
+                        return sig.x_low ^ (sig.dist_low << 1) ^ (static_cast<size_t>(sig.type) << 11);
+                }
+        };
+
         struct BatchSig
         {
                 u8 x[12];
@@ -218,27 +239,28 @@ if (!PntIndex)
                 }
         };
 
-struct BatchSigHash
-{
-size_t operator()(const BatchSig& sig) const noexcept
-{
-// Use the low limbs of X and distance for a compact hash.
-size_t h1, h2, h3;
-memcpy(&h1, sig.x, sizeof(size_t));
-memcpy(&h2, sig.d, sizeof(size_t));
-memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
-return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
-}
-};
+        struct BatchSigHash
+        {
+                size_t operator()(const BatchSig& sig) const noexcept
+                {
+                        size_t h1, h2, h3;
+                        memcpy(&h1, sig.x, sizeof(size_t));
+                        memcpy(&h2, sig.d, sizeof(size_t));
+                        memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
+                        return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
+                }
+        };
 
-// TODO: Introduce tiered DP acceptance and batch Jacobian normalization once
-// the GPU pipeline exposes the required projective limbs and per-step state.
-// The current CPU-side deduplication remains the choke point for expensive
-// inversions and DB lookups; the planned Montgomery trick and multi-scale
-// jump set controller will need coordinated kernel and host updates.
+        // Stage 1: ultra-cheap projective prefilter keyed on low limbs. This mimics
+        // the GPU-side predicate that will eventually gate the affine normalization
+        // (Montgomery trick). Only candidates that clear this inexpensive check flow
+        // into the full DB/affine stage.
+        std::unordered_set<ProjectiveSig, ProjectiveSigHash> proj_prefilter;
+        proj_prefilter.reserve(cnt * 2);
 
-std::unordered_set<BatchSig, BatchSigHash> prefilter;
-prefilter.reserve(cnt * 2);
+        // Stage 2: full duplicate filter to prevent redundant DB probes within the batch.
+        std::unordered_set<BatchSig, BatchSigHash> batch_prefilter;
+        batch_prefilter.reserve(cnt * 2);
 
         for (int i = 0; i < cnt; i++)
         {
@@ -248,14 +270,20 @@ prefilter.reserve(cnt * 2);
                 memcpy(nrec.d, p + 16, 22);
                 nrec.type = gGenMode ? TAME : p[40];
 
+                ProjectiveSig proj_sig{};
+                memcpy(&proj_sig.x_low, p, sizeof(proj_sig.x_low));
+                memcpy(&proj_sig.dist_low, p + 16, sizeof(proj_sig.dist_low));
+                proj_sig.type = nrec.type;
+
                 BatchSig sig{};
                 memcpy(sig.x, p, sizeof(sig.x));
                 memcpy(sig.d, p + 16, sizeof(sig.d));
                 sig.type = nrec.type;
-                // Cheap duplicate filter: avoid running the full DB + collision
-                // logic multiple times for identical (x, d, type) triples coming
-                // from the same GPU batch.
-                if (!prefilter.insert(sig).second)
+                proj_prefilter.insert(proj_sig);
+                // Only skip exact duplicates; projective collisions still flow into the
+                // full stage to preserve correctness while benefiting from the cheaper
+                // hash-fronted cache.
+                if (!batch_prefilter.insert(sig).second)
                         continue;
 
 		DBRec* pref = (DBRec*)db.FindOrAddDataBlock((u8*)&nrec);
