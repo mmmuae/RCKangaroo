@@ -18,7 +18,7 @@ endif
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
 NVCCFLAGS := -O3 \
    # -gencode=arch=compute_120,code=sm_120 \
-    -gencode=arch=compute_90,code=sm_90 \
+   # -gencode=arch=compute_90,code=sm_90 \
     -gencode=arch=compute_89,code=sm_89 \
     -gencode=arch=compute_86,code=sm_86 \
     -gencode=arch=compute_75,code=sm_75 \
@@ -46,5 +46,6 @@ $(TARGET): $(CPP_OBJECTS) $(CU_OBJECTS)
 
 clean:
 	rm -f $(CPP_OBJECTS) $(CU_OBJECTS)
+
 
 
