@@ -4,7 +4,10 @@
 // https://github.com/RetiredC
 
 
+#include <cstring>
 #include <iostream>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "cuda_runtime.h"
@@ -191,9 +194,9 @@ bool Collision_SOTA(EcPoint& pnt, EcInt t, int TameType, EcInt w, int WildType, 
 
 void CheckNewPoints()
 {
-	csAddPoints.Enter();
-	if (!PntIndex)
-	{
+csAddPoints.Enter();
+if (!PntIndex)
+{
 		csAddPoints.Leave();
 		return;
 	}
@@ -203,13 +206,57 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
-	for (int i = 0; i < cnt; i++)
-	{
-		DBRec nrec;
-		u8* p = pPntList2 + i * GPU_DP_SIZE;
-		memcpy(nrec.x, p, 12);
-		memcpy(nrec.d, p + 16, 22);
-		nrec.type = gGenMode ? TAME : p[40];
+        struct BatchSig
+        {
+                u8 x[12];
+                u8 d[22];
+                u8 type;
+
+                bool operator==(const BatchSig& other) const
+                {
+                        return memcmp(this, &other, sizeof(BatchSig)) == 0;
+                }
+        };
+
+struct BatchSigHash
+{
+size_t operator()(const BatchSig& sig) const noexcept
+{
+// Use the low limbs of X and distance for a compact hash.
+size_t h1, h2, h3;
+memcpy(&h1, sig.x, sizeof(size_t));
+memcpy(&h2, sig.d, sizeof(size_t));
+memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
+return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
+}
+};
+
+// TODO: Introduce tiered DP acceptance and batch Jacobian normalization once
+// the GPU pipeline exposes the required projective limbs and per-step state.
+// The current CPU-side deduplication remains the choke point for expensive
+// inversions and DB lookups; the planned Montgomery trick and multi-scale
+// jump set controller will need coordinated kernel and host updates.
+
+std::unordered_set<BatchSig, BatchSigHash> prefilter;
+prefilter.reserve(cnt * 2);
+
+        for (int i = 0; i < cnt; i++)
+        {
+                DBRec nrec;
+                u8* p = pPntList2 + i * GPU_DP_SIZE;
+                memcpy(nrec.x, p, 12);
+                memcpy(nrec.d, p + 16, 22);
+                nrec.type = gGenMode ? TAME : p[40];
+
+                BatchSig sig{};
+                memcpy(sig.x, p, sizeof(sig.x));
+                memcpy(sig.d, p + 16, sizeof(sig.d));
+                sig.type = nrec.type;
+                // Cheap duplicate filter: avoid running the full DB + collision
+                // logic multiple times for identical (x, d, type) triples coming
+                // from the same GPU batch.
+                if (!prefilter.insert(sig).second)
+                        continue;
 
 		DBRec* pref = (DBRec*)db.FindOrAddDataBlock((u8*)&nrec);
 		if (gGenMode)
