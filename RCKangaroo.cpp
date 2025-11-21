@@ -194,9 +194,9 @@ bool Collision_SOTA(EcPoint& pnt, EcInt t, int TameType, EcInt w, int WildType, 
 
 void CheckNewPoints()
 {
-csAddPoints.Enter();
-if (!PntIndex)
-{
+        csAddPoints.Enter();
+        if (!PntIndex)
+        {
 		csAddPoints.Leave();
 		return;
 	}
@@ -218,27 +218,21 @@ if (!PntIndex)
                 }
         };
 
-struct BatchSigHash
-{
-size_t operator()(const BatchSig& sig) const noexcept
-{
-// Use the low limbs of X and distance for a compact hash.
-size_t h1, h2, h3;
-memcpy(&h1, sig.x, sizeof(size_t));
-memcpy(&h2, sig.d, sizeof(size_t));
-memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
-return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
-}
-};
+        struct BatchSigHash
+        {
+                size_t operator()(const BatchSig& sig) const noexcept
+                {
+                        // Use the low limbs of X and distance for a compact hash.
+                        size_t h1, h2, h3;
+                        memcpy(&h1, sig.x, sizeof(size_t));
+                        memcpy(&h2, sig.d, sizeof(size_t));
+                        memcpy(&h3, sig.d + sizeof(size_t), sizeof(size_t));
+                        return h1 ^ (h2 << 1) ^ (h3 << 7) ^ sig.type;
+                }
+        };
 
-// TODO: Introduce tiered DP acceptance and batch Jacobian normalization once
-// the GPU pipeline exposes the required projective limbs and per-step state.
-// The current CPU-side deduplication remains the choke point for expensive
-// inversions and DB lookups; the planned Montgomery trick and multi-scale
-// jump set controller will need coordinated kernel and host updates.
-
-std::unordered_set<BatchSig, BatchSigHash> prefilter;
-prefilter.reserve(cnt * 2);
+        std::unordered_set<BatchSig, BatchSigHash> prefilter;
+        prefilter.reserve(cnt * 2);
 
         for (int i = 0; i < cnt; i++)
         {
