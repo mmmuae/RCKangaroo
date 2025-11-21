@@ -5,8 +5,6 @@
 
 
 #include <iostream>
-#include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "cuda_runtime.h"
@@ -193,9 +191,9 @@ bool Collision_SOTA(EcPoint& pnt, EcInt t, int TameType, EcInt w, int WildType, 
 
 void CheckNewPoints()
 {
-        csAddPoints.Enter();
-        if (!PntIndex)
-        {
+	csAddPoints.Enter();
+	if (!PntIndex)
+	{
 		csAddPoints.Leave();
 		return;
 	}
@@ -205,27 +203,13 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
-        std::unordered_set<std::string> prefilter;
-        prefilter.reserve(cnt * 2);
-
-        for (int i = 0; i < cnt; i++)
-        {
-                DBRec nrec;
-                u8* p = pPntList2 + i * GPU_DP_SIZE;
-                memcpy(nrec.x, p, 12);
-                memcpy(nrec.d, p + 16, 22);
-                nrec.type = gGenMode ? TAME : p[40];
-
-                // Cheap duplicate filter: avoid running the full DB + collision
-                // logic multiple times for identical (x, d, type) triples coming
-                // from the same GPU batch.
-                std::string sig;
-                sig.reserve(35);
-                sig.append(reinterpret_cast<char*>(p), 12); // X
-                sig.append(reinterpret_cast<char*>(p) + 16, 22); // distance
-                sig.push_back(static_cast<char>(nrec.type));
-                if (!prefilter.insert(sig).second)
-                        continue;
+	for (int i = 0; i < cnt; i++)
+	{
+		DBRec nrec;
+		u8* p = pPntList2 + i * GPU_DP_SIZE;
+		memcpy(nrec.x, p, 12);
+		memcpy(nrec.d, p + 16, 22);
+		nrec.type = gGenMode ? TAME : p[40];
 
 		DBRec* pref = (DBRec*)db.FindOrAddDataBlock((u8*)&nrec);
 		if (gGenMode)
