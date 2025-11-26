@@ -16,13 +16,15 @@ $(error "nvcc not found. Set CUDA_PATH or NVCC to a valid CUDA installation")
 endif
 
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
+
+# CUDA 13.0+ only supports newer architectures (Ampere and later)
+# RTX 5090: sm_120 (Blackwell), RTX 4090: sm_89 (Ada), H100: sm_90 (Hopper), RTX 3090: sm_86 (Ampere)
 NVCCFLAGS := -O3 \
     -gencode=arch=compute_120,code=sm_120 \
 	-gencode=arch=compute_90,code=sm_90 \
     -gencode=arch=compute_89,code=sm_89 \
-    -gencode=arch=compute_86,code=sm_86 \
-    -gencode=arch=compute_75,code=sm_75 \
-    -gencode=arch=compute_61,code=sm_61
+    -gencode=arch=compute_86,code=sm_86
+
 LDFLAGS := -L$(CUDA_PATH)/lib64 -lcudart -pthread
 
 CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
