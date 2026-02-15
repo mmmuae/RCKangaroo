@@ -69,7 +69,7 @@ CUDA_ARCH_FLAGS += -gencode=arch=compute_$(CUDA_PTX_ARCH),code=compute_$(CUDA_PT
 NVCCFLAGS := -O3 $(CUDA_ARCH_FLAGS)
 LDFLAGS := $(CUDA_LIB_FLAGS) $(CUDA_RPATH_FLAGS) -lcudart -pthread
 
-CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
+CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp WildSpoolWriter.cpp
 GPU_SRC := RCGpuCore.cu
 
 CPP_OBJECTS := $(CPU_SRC:.cpp=.o)

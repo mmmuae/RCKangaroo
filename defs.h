@@ -56,6 +56,11 @@ typedef char i8;
 #define WILD1				1  // Wild kangs1 
 #define WILD2				2  // Wild kangs2
 
+// runtime mode
+#define KANG_MODE_MAIN		0
+#define KANG_MODE_GEN_TAME	1
+#define KANG_MODE_WILD_ONLY	2
+
 #define GPU_DP_SIZE			48
 #define MAX_DP_CNT			(256 * 1024)
 
@@ -94,7 +99,7 @@ struct TKparams
 	u64* LoopTable;
 	u32* dbg_buf;
 	u32* LoopedKangs;
-	bool IsGenMode; //tames generation mode
+	u32 RunMode; // KANG_MODE_*
 
 	u32 KernelA_LDS_Size;
 	u32 KernelB_LDS_Size;

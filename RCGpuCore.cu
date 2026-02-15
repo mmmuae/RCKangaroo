@@ -495,7 +495,10 @@ __device__ __forceinline__ void BuildDP(const TKparams& Kparams, int kang_ind, u
 	*(int4*)&DPs[0] = rx;
 	*(int4*)&DPs[4] = ((int4*)d)[0];
 	*(u64*)&DPs[8] = d[2];
-	DPs[10] = 3 * kang_ind / Kparams.KangCnt; //kang type
+	if (Kparams.RunMode == KANG_MODE_WILD_ONLY)
+		DPs[10] = (kang_ind < (Kparams.KangCnt / 2)) ? WILD1 : WILD2;
+	else
+		DPs[10] = 3 * kang_ind / Kparams.KangCnt; //kang type
 }
 
 __device__ __forceinline__ bool ProcessJumpDistance(u32 step_ind, u32 d_cur, u64* d, u32 kang_ind, u64* jmp1_d, u64* jmp2_d, const TKparams& Kparams, u64* table, u32* cur_ind, u8 iter)
@@ -866,13 +869,20 @@ __global__ void KernelGen(const TKparams Kparams)
 			Copy_u64_x4(ty, t2y);
 		}
 
-		if (!Kparams.IsGenMode)
-			if (kang_ind >= Kparams.KangCnt / 3)
+		if (Kparams.RunMode != KANG_MODE_GEN_TAME)
+		{
+			bool apply_offset = false;
+			if (Kparams.RunMode == KANG_MODE_WILD_ONLY)
+				apply_offset = true;
+			else if (kang_ind >= Kparams.KangCnt / 3)
+				apply_offset = true;
+			if (apply_offset)
 			{
 				AddPoints(t2x, t2y, x, y, x0, y0);
 				Copy_u64_x4(x, t2x);
 				Copy_u64_x4(y, t2y);
 			}
+		}
 
 		Kparams.Kangs[kang_ind * 12 + 0] = x[0];
 		Kparams.Kangs[kang_ind * 12 + 1] = x[1];
