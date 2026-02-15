@@ -44,7 +44,9 @@ CUDA_LIB_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-L$(d))
 CUDA_RPATH_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-Wl,-rpath,$(d))
 
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
-NVCCFLAGS := -O3 -gencode=arch=compute_89,code=compute_89 -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_61,code=compute_61
+CUDA_ARCH_LIST ?= 89 86 75 61
+CUDA_ARCH_FLAGS := $(foreach arch,$(CUDA_ARCH_LIST),-gencode=arch=compute_$(arch),code=compute_$(arch))
+NVCCFLAGS := -O3 $(CUDA_ARCH_FLAGS)
 LDFLAGS := $(CUDA_LIB_FLAGS) $(CUDA_RPATH_FLAGS) -lcudart -pthread
 
 CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp
