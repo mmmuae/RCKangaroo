@@ -14,6 +14,25 @@ Discussion thread: https://bitcointalk.org/index.php?topic=5517607
 - Supports ranges up to 170 bits.
 - Both Windows and Linux are supported.
 
+<b>Linux build:</b>
+
+The Makefile auto-detects CUDA from `NVCC`, `CUDA_PATH`, `CUDA_HOME`, or `PATH` (`nvcc`).
+You can also override GPU targets with `CUDA_ARCH_LIST` to match cloud hardware.
+
+Examples:
+
+```bash
+make all
+```
+
+```bash
+CUDA_PATH=/usr/local/cuda-13.0 make all
+```
+
+```bash
+CUDA_ARCH_LIST="120 89 86 75 61" make all
+```
+
 <b>Limitations:</b>
 
 - No advanced features like networking, saving/loading DPs, etc.
