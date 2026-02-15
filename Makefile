@@ -45,9 +45,19 @@ CUDA_RPATH_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-Wl,-rpath,$(d))
 
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
 
-# Prefer the architecture list reported by the installed nvcc.
+# Prefer native GPU architectures, then fall back to nvcc supported list.
 NVCC_SUPPORTED_ARCH_LIST := $(strip $(shell $(NVCC) --list-gpu-arch 2>/dev/null | sed -n 's/^compute_//p' | tr '\n' ' '))
-CUDA_ARCH_LIST ?= $(NVCC_SUPPORTED_ARCH_LIST)
+GPU_DETECTED_ARCH_LIST := $(strip $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr -d ' ' | sed -n 's/^\([0-9]\+\)\.\([0-9]\+\)$$/\1\2/p' | sort -u | tr '\n' ' '))
+ifeq ($(origin CUDA_ARCH_LIST), undefined)
+  CUDA_ARCH_LIST := $(GPU_DETECTED_ARCH_LIST)
+  ifneq ($(strip $(NVCC_SUPPORTED_ARCH_LIST)),)
+    ifneq ($(strip $(CUDA_ARCH_LIST)),)
+      CUDA_ARCH_LIST := $(filter $(NVCC_SUPPORTED_ARCH_LIST),$(CUDA_ARCH_LIST))
+    else
+      CUDA_ARCH_LIST := $(NVCC_SUPPORTED_ARCH_LIST)
+    endif
+  endif
+endif
 ifeq ($(strip $(CUDA_ARCH_LIST)),)
   CUDA_ARCH_LIST := 89 86 80 75
 endif
