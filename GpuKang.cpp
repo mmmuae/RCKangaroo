@@ -15,6 +15,7 @@ void CallGpuKernelGen(TKparams Kparams);
 void CallGpuKernelABC(TKparams Kparams);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
+extern bool gWildOnlyMode;
 
 int RCGpuKang::CalcKangCnt()
 {
@@ -54,7 +55,12 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	Kparams.KernelA_LDS_Size = 64 * JMP_CNT + 16 * Kparams.BlockSize;
 	Kparams.KernelB_LDS_Size = 64 * JMP_CNT;
 	Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
-	Kparams.IsGenMode = gGenMode;
+	if (gWildOnlyMode)
+		Kparams.RunMode = KANG_MODE_WILD_ONLY;
+	else if (gGenMode)
+		Kparams.RunMode = KANG_MODE_GEN_TAME;
+	else
+		Kparams.RunMode = KANG_MODE_MAIN;
 
 //allocate gpu mem
 	u64 size;
@@ -285,7 +291,7 @@ void RCGpuKang::GenerateRndDistances()
 	for (int i = 0; i < KangCnt; i++)
 	{
 		EcInt d;
-		if (i < KangCnt / 3)
+		if (!gWildOnlyMode && i < KangCnt / 3)
 			d.RndBits(Range - 4); //TAME kangs
 		else
 		{
@@ -358,13 +364,22 @@ bool RCGpuKang::Start()
 	PntB.SaveToBuffer64(buf_PntB);
 	for (int i = 0; i < KangCnt; i++)
 	{
-		if (i < KangCnt / 3)
-			memset(RndPnts[i].x, 0, 64);
-		else
-			if (i < 2 * KangCnt / 3)
+		if (gWildOnlyMode)
+		{
+			if (i < KangCnt / 2)
 				memcpy(RndPnts[i].x, buf_PntA, 64);
 			else
 				memcpy(RndPnts[i].x, buf_PntB, 64);
+		}
+		else
+		{
+			if (i < KangCnt / 3)
+				memset(RndPnts[i].x, 0, 64);
+			else if (i < 2 * KangCnt / 3)
+				memcpy(RndPnts[i].x, buf_PntA, 64);
+			else
+				memcpy(RndPnts[i].x, buf_PntB, 64);
+		}
 	}
 	//copy to gpu
 	err = cudaMemcpy(Kparams.Kangs, RndPnts, KangCnt * 96, cudaMemcpyHostToDevice);

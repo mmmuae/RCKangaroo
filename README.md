@@ -61,6 +61,18 @@ CUDA_ARCH_LIST="120" make all
 
 <b>-tames</b>		filename with tames. If file not found, software generates tames (option "-max" is required) and saves them to the file. If the file is found, software loads tames to speedup solving. 
 
+<b>-wild-only</b>		run worker in wild-only export mode (no local key solving path).
+
+<b>-wild-spool-dir</b>		required with "-wild-only". Local directory where `.wdp` chunks are written.
+
+<b>-worker-id</b>		required with "-wild-only". Worker identifier stored in every `.wdp` chunk.
+
+<b>-session-tag</b>		optional session tag for `.wdp` filenames and metadata. Auto-generated if omitted.
+
+<b>-wild-flush-records</b>	optional chunk size in DP records for `.wdp` output (default 1000000).
+
+<b>-wild-flush-sec</b>	optional max seconds before flushing a partial `.wdp` chunk (default 10).
+
 When public key is solved, software displays it and also writes it to "RESULTS.TXT" file. 
 
 Sample command line for puzzle #85:
@@ -72,6 +84,10 @@ Sample command to generate tames:
 RCKangaroo.exe -dp 16 -range 76 -tames tames76.dat -max 10
 
 Then you can restart software with same parameters to see less K in benchmark mode or add "-tames tames76.dat" to solve some public key in 76-bit range faster.
+
+Sample command for wild-only export:
+
+RCKangaroo -wild-only -range 134 -dp 30 -start 0 -pubkey 03... -worker-id worker01 -wild-spool-dir /tmp/wildspool
 
 <b>Some notes:</b>
 

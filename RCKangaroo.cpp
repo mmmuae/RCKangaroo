@@ -6,6 +6,9 @@
 
 #include <iostream>
 #include <vector>
+#include <signal.h>
+#include <ctype.h>
+#include <time.h>
 
 #include "cuda_runtime.h"
 #include "cuda.h"
@@ -13,6 +16,7 @@
 #include "defs.h"
 #include "utils.h"
 #include "GpuKang.h"
+#include "WildSpoolWriter.h"
 
 
 EcJMP EcJumps1[JMP_CNT];
@@ -54,6 +58,17 @@ char gTamesFileName[1024];
 double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
+bool gWildOnlyMode;
+volatile bool gStopRequested;
+bool gInterruptedStop;
+char gWildSpoolDir[1024];
+char gWorkerId[128];
+char gSessionTag[128];
+char gPubKeyRaw[140];
+char gStartRaw[140];
+u32 gWildFlushRecords;
+u32 gWildFlushSec;
+WildSpoolWriter gWildWriter;
 
 #pragma pack(push, 1)
 struct DBRec
@@ -63,6 +78,41 @@ struct DBRec
 	u8 type; //0 - tame, 1 - wild1, 2 - wild2
 };
 #pragma pack(pop)
+
+bool IsSafeToken(const char* value, int maxLen)
+{
+	if (!value)
+		return false;
+	int len = (int)strlen(value);
+	if ((len < 1) || (len > maxLen))
+		return false;
+	for (int i = 0; i < len; i++)
+	{
+		u8 c = (u8)value[i];
+		if (!(isalnum(c) || c == '_' || c == '-'))
+			return false;
+	}
+	return true;
+}
+
+void GenDefaultSessionTag()
+{
+	if (gSessionTag[0])
+		return;
+#ifdef _WIN32
+	int pid = _getpid();
+#else
+	int pid = getpid();
+#endif
+	time_t now = time(nullptr);
+	snprintf(gSessionTag, sizeof(gSessionTag), "s%llu_%d", (unsigned long long)now, pid);
+}
+
+void OnSignal(int sig)
+{
+	(void)sig;
+	gStopRequested = true;
+}
 
 void InitGpus()
 {
@@ -203,6 +253,19 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
+	if (gWildOnlyMode)
+	{
+		for (int i = 0; i < cnt; i++)
+		{
+			u8* p = pPntList2 + i * GPU_DP_SIZE;
+			u8 type = p[40];
+			if ((type != WILD1) && (type != WILD2))
+				continue;
+			gWildWriter.Enqueue(p, p + 16, type);
+		}
+		return;
+	}
+
 	for (int i = 0; i < cnt; i++)
 	{
 		DBRec nrec;
@@ -306,7 +369,23 @@ void ShowStats(u64 tm_start, double exp_ops, double dp_val)
 	int hours = (int)(sec - days * (3600 * 24)) / 3600;
 	int min = (int)(sec - days * (3600 * 24) - hours * 3600) / 60;
 	 
-	printf("%sSpeed: %d MKeys/s, Err: %d, DPs: %lluK/%lluK, Time: %llud:%02dh:%02dm/%llud:%02dh:%02dm\r\n", gGenMode ? "GEN: " : (IsBench ? "BENCH: " : "MAIN: "), speed, gTotalErrors, db.GetBlockCnt()/1000, est_dps_cnt/1000, days, hours, min, exp_days, exp_hours, exp_min);
+	if (gWildOnlyMode)
+	{
+		printf(
+			"WILD: Speed: %d MKeys/s, Err: %d, Exported: %lluK rec, Files: %llu, Pending: %llu, Time: %llud:%02dh:%02dm\r\n",
+			speed,
+			gTotalErrors,
+			gWildWriter.GetWrittenRecords() / 1000ull,
+			gWildWriter.GetWrittenFiles(),
+			gWildWriter.GetPendingRecords(),
+			days,
+			hours,
+			min);
+	}
+	else
+	{
+		printf("%sSpeed: %d MKeys/s, Err: %d, DPs: %lluK/%lluK, Time: %llud:%02dh:%02dm/%llud:%02dh:%02dm\r\n", gGenMode ? "GEN: " : (IsBench ? "BENCH: " : "MAIN: "), speed, gTotalErrors, db.GetBlockCnt()/1000, est_dps_cnt/1000, days, hours, min, exp_days, exp_hours, exp_min);
+	}
 }
 
 bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
@@ -445,7 +524,7 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	}
 
 	u64 tm_stats = GetTickCount64();
-	while (!gSolved)
+	while (!gSolved && !gStopRequested)
 	{
 		CheckNewPoints();
 		Sleep(10);
@@ -462,6 +541,8 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 			break;
 		}
 	}
+	if (gStopRequested)
+		gInterruptedStop = true;
 
 	printf("Stopping work ...\r\n");
 	for (int i = 0; i < GpuCnt; i++)
@@ -475,6 +556,13 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 #else
 		pthread_join(thr_handles[i], NULL);
 #endif
+	}
+	CheckNewPoints();
+
+	if (gWildOnlyMode)
+	{
+		db.Clear();
+		return !gInterruptedStop;
 	}
 
 	if (gIsOpsLimit)
@@ -529,6 +617,11 @@ bool ParseCommandLine(int argc, char* argv[])
 		else
 		if (strcmp(argument, "-dp") == 0)
 		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -dp option\r\n");
+				return false;
+			}
 			int val = atoi(argv[ci]);
 			ci++;
 			if ((val < 14) || (val > 60))
@@ -541,6 +634,11 @@ bool ParseCommandLine(int argc, char* argv[])
 		else
 		if (strcmp(argument, "-range") == 0)
 		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -range option\r\n");
+				return false;
+			}
 			int val = atoi(argv[ci]);
 			ci++;
 			if ((val < 32) || (val > 170))
@@ -552,34 +650,58 @@ bool ParseCommandLine(int argc, char* argv[])
 		}
 		else
 		if (strcmp(argument, "-start") == 0)
-		{	
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -start option\r\n");
+				return false;
+			}
 			if (!gStart.SetHexStr(argv[ci]))
 			{
 				printf("error: invalid value for -start option\r\n");
 				return false;
 			}
+			strncpy(gStartRaw, argv[ci], sizeof(gStartRaw) - 1);
+			gStartRaw[sizeof(gStartRaw) - 1] = 0;
 			ci++;
 			gStartSet = true;
 		}
 		else
 		if (strcmp(argument, "-pubkey") == 0)
 		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -pubkey option\r\n");
+				return false;
+			}
 			if (!gPubKey.SetHexStr(argv[ci]))
 			{
 				printf("error: invalid value for -pubkey option\r\n");
 				return false;
 			}
+			strncpy(gPubKeyRaw, argv[ci], sizeof(gPubKeyRaw) - 1);
+			gPubKeyRaw[sizeof(gPubKeyRaw) - 1] = 0;
 			ci++;
 		}
 		else
 		if (strcmp(argument, "-tames") == 0)
 		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -tames option\r\n");
+				return false;
+			}
 			strcpy(gTamesFileName, argv[ci]);
 			ci++;
 		}
 		else
 		if (strcmp(argument, "-max") == 0)
 		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -max option\r\n");
+				return false;
+			}
 			double val = atof(argv[ci]);
 			ci++;
 			if (val < 0.001)
@@ -588,6 +710,85 @@ bool ParseCommandLine(int argc, char* argv[])
 				return false;
 			}
 			gMax = val;
+		}
+		else if (strcmp(argument, "-wild-only") == 0)
+		{
+			gWildOnlyMode = true;
+		}
+		else if (strcmp(argument, "-wild-spool-dir") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-spool-dir option\r\n");
+				return false;
+			}
+			strncpy(gWildSpoolDir, argv[ci], sizeof(gWildSpoolDir) - 1);
+			gWildSpoolDir[sizeof(gWildSpoolDir) - 1] = 0;
+			ci++;
+		}
+		else if (strcmp(argument, "-worker-id") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -worker-id option\r\n");
+				return false;
+			}
+			if (!IsSafeToken(argv[ci], 63))
+			{
+				printf("error: invalid -worker-id (allowed: letters, digits, '_' and '-')\r\n");
+				return false;
+			}
+			strncpy(gWorkerId, argv[ci], sizeof(gWorkerId) - 1);
+			gWorkerId[sizeof(gWorkerId) - 1] = 0;
+			ci++;
+		}
+		else if (strcmp(argument, "-wild-flush-records") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-flush-records option\r\n");
+				return false;
+			}
+			int val = atoi(argv[ci]);
+			ci++;
+			if ((val < 1000) || (val > 100000000))
+			{
+				printf("error: invalid value for -wild-flush-records option\r\n");
+				return false;
+			}
+			gWildFlushRecords = (u32)val;
+		}
+		else if (strcmp(argument, "-wild-flush-sec") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-flush-sec option\r\n");
+				return false;
+			}
+			int val = atoi(argv[ci]);
+			ci++;
+			if ((val < 1) || (val > 3600))
+			{
+				printf("error: invalid value for -wild-flush-sec option\r\n");
+				return false;
+			}
+			gWildFlushSec = (u32)val;
+		}
+		else if (strcmp(argument, "-session-tag") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -session-tag option\r\n");
+				return false;
+			}
+			if (!IsSafeToken(argv[ci], 63))
+			{
+				printf("error: invalid -session-tag (allowed: letters, digits, '_' and '-')\r\n");
+				return false;
+			}
+			strncpy(gSessionTag, argv[ci], sizeof(gSessionTag) - 1);
+			gSessionTag[sizeof(gSessionTag) - 1] = 0;
+			ci++;
 		}
 		else
 		{
@@ -601,8 +802,32 @@ bool ParseCommandLine(int argc, char* argv[])
 			printf("error: you must also specify -dp, -range and -start options\r\n");
 			return false;
 		}
+	if (gWildOnlyMode)
+	{
+		if (gTamesFileName[0] || (gMax > 0.0))
+		{
+			printf("error: -wild-only cannot be combined with -tames or -max\r\n");
+			return false;
+		}
+		if (gPubKey.x.IsZero() || !gStartSet || !gRange || !gDP)
+		{
+			printf("error: -wild-only requires -pubkey, -start, -range and -dp\r\n");
+			return false;
+		}
+		if (!gWildSpoolDir[0] || !gWorkerId[0])
+		{
+			printf("error: -wild-only requires -wild-spool-dir and -worker-id\r\n");
+			return false;
+		}
+		GenDefaultSessionTag();
+	}
 	if (gTamesFileName[0] && !IsFileExist(gTamesFileName))
 	{
+		if (gWildOnlyMode)
+		{
+			printf("error: -tames is not allowed in -wild-only mode\r\n");
+			return false;
+		}
 		if (gMax == 0.0)
 		{
 			printf("error: you must also specify -max option to generate tames\r\n");
@@ -641,12 +866,27 @@ int main(int argc, char* argv[])
 	gRange = 0;
 	gStartSet = false;
 	gTamesFileName[0] = 0;
+	gWildSpoolDir[0] = 0;
+	gWorkerId[0] = 0;
+	gSessionTag[0] = 0;
+	gPubKeyRaw[0] = 0;
+	gStartRaw[0] = 0;
 	gMax = 0.0;
 	gGenMode = false;
 	gIsOpsLimit = false;
+	gWildOnlyMode = false;
+	gStopRequested = false;
+	gInterruptedStop = false;
+	gWildFlushRecords = 1000000;
+	gWildFlushSec = 10;
 	memset(gGPUs_Mask, 1, sizeof(gGPUs_Mask));
 	if (!ParseCommandLine(argc, argv))
 		return 0;
+
+	signal(SIGINT, OnSignal);
+#ifndef _WIN32
+	signal(SIGTERM, OnSignal);
+#endif
 
 	InitGpus();
 
@@ -663,7 +903,47 @@ int main(int argc, char* argv[])
 	gTotalErrors = 0;
 	IsBench = gPubKey.x.IsZero();
 
-	if (!IsBench && !gGenMode)
+	if (gWildOnlyMode)
+	{
+		printf("\r\nWILD-ONLY MODE\r\n");
+		printf("Worker ID: %s\r\n", gWorkerId);
+		printf("Session tag: %s\r\n", gSessionTag);
+		printf("Spool dir: %s\r\n", gWildSpoolDir);
+		EcPoint PntToSolve, PntOfs;
+		EcInt pk_dummy;
+		PntToSolve = gPubKey;
+		if (!gStart.IsZero())
+		{
+			PntOfs = ec.MultiplyG(gStart);
+			PntOfs.y.NegModP();
+			PntToSolve = ec.AddPoints(PntToSolve, PntOfs);
+		}
+		if (!gWildWriter.Start(
+				gWildSpoolDir,
+				gWorkerId,
+				gSessionTag,
+				gPubKeyRaw,
+				gStartRaw,
+				gRange,
+				gDP,
+				gWildFlushRecords,
+				gWildFlushSec))
+		{
+			printf("FATAL ERROR: cannot initialize wild spool writer\r\n");
+			goto label_end;
+		}
+		if (!SolvePoint(PntToSolve, gRange, gDP, &pk_dummy))
+		{
+			if (!gInterruptedStop)
+				printf("FATAL ERROR: wild-only run failed\r\n");
+		}
+		gWildWriter.StopAndFlush();
+		printf("Wild export done. Files: %llu, Records: %llu, Dropped: %llu\r\n",
+			gWildWriter.GetWrittenFiles(),
+			gWildWriter.GetWrittenRecords(),
+			gWildWriter.GetDroppedRecords());
+	}
+	else if (!IsBench && !gGenMode)
 	{
 		printf("\r\nMAIN MODE\r\n\r\n");
 		EcPoint PntToSolve, PntOfs;
@@ -721,10 +1001,10 @@ int main(int argc, char* argv[])
 		else
 			printf("\r\nBENCHMARK MODE\r\n");
 		//solve points, show K
-		while (1)
-		{
-			EcInt pk, pk_found;
-			EcPoint PntToSolve;
+			while (!gStopRequested)
+			{
+				EcInt pk, pk_found;
+				EcPoint PntToSolve;
 
 			if (!gRange)
 				gRange = 78;
@@ -747,14 +1027,16 @@ int main(int argc, char* argv[])
 				break;
 			}
 			TotalOps += PntTotalOps;
-			TotalSolved++;
-			u64 ops_per_pnt = TotalOps / TotalSolved;
-			double K = (double)ops_per_pnt / pow(2.0, gRange / 2.0);
-			printf("Points solved: %d, average K: %.3f (with DP and GPU overheads)\r\n", TotalSolved, K);
-			//if (TotalSolved >= 100) break; //dbg
+				TotalSolved++;
+				u64 ops_per_pnt = TotalOps / TotalSolved;
+				double K = (double)ops_per_pnt / pow(2.0, gRange / 2.0);
+				printf("Points solved: %d, average K: %.3f (with DP and GPU overheads)\r\n", TotalSolved, K);
+				//if (TotalSolved >= 100) break; //dbg
+			}
 		}
-	}
-label_end:
+	label_end:
+	if (gWildOnlyMode)
+		gWildWriter.StopAndFlush();
 	for (int i = 0; i < GpuCnt; i++)
 		delete GpuKangs[i];
 	DeInitEc();
