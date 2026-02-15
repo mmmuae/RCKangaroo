@@ -1,4 +1,4 @@
-CC ?= g++
+CXX ?= g++
 CUDA_PATH ?=
 CUDA_HOME ?=
 NVCC ?=
@@ -44,8 +44,18 @@ CUDA_LIB_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-L$(d))
 CUDA_RPATH_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-Wl,-rpath,$(d))
 
 CCFLAGS := -O3 -I$(CUDA_PATH)/include
-CUDA_ARCH_LIST ?= 89 86 75 61
-CUDA_ARCH_FLAGS := $(foreach arch,$(CUDA_ARCH_LIST),-gencode=arch=compute_$(arch),code=compute_$(arch))
+
+# Prefer the architecture list reported by the installed nvcc.
+NVCC_SUPPORTED_ARCH_LIST := $(strip $(shell $(NVCC) --list-gpu-arch 2>/dev/null | sed -n 's/^compute_//p' | tr '\n' ' '))
+CUDA_ARCH_LIST ?= $(NVCC_SUPPORTED_ARCH_LIST)
+ifeq ($(strip $(CUDA_ARCH_LIST)),)
+  CUDA_ARCH_LIST := 89 86 80 75
+endif
+CUDA_ARCH_LIST := $(strip $(CUDA_ARCH_LIST))
+
+CUDA_ARCH_FLAGS := $(foreach arch,$(CUDA_ARCH_LIST),-gencode=arch=compute_$(arch),code=sm_$(arch))
+CUDA_PTX_ARCH := $(lastword $(CUDA_ARCH_LIST))
+CUDA_ARCH_FLAGS += -gencode=arch=compute_$(CUDA_PTX_ARCH),code=compute_$(CUDA_PTX_ARCH)
 NVCCFLAGS := -O3 $(CUDA_ARCH_FLAGS)
 LDFLAGS := $(CUDA_LIB_FLAGS) $(CUDA_RPATH_FLAGS) -lcudart -pthread
 
@@ -60,10 +70,10 @@ TARGET := rckangaroo
 all: $(TARGET)
 
 $(TARGET): $(CPP_OBJECTS) $(CU_OBJECTS)
-	$(CC) $(CCFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(CCFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.cpp
-	$(CC) $(CCFLAGS) -c $< -o $@
+	$(CXX) $(CCFLAGS) -c $< -o $@
 
 %.o: %.cu
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
