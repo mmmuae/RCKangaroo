@@ -17,8 +17,9 @@ Discussion thread: https://bitcointalk.org/index.php?topic=5517607
 <b>Linux build:</b>
 
 The Makefile auto-detects CUDA from `NVCC`, `CUDA_PATH`, `CUDA_HOME`, or `PATH` (`nvcc`).
-By default, the Makefile uses `nvcc --list-gpu-arch` to select supported targets for your CUDA toolkit.
-You can still override targets with `CUDA_ARCH_LIST` to match cloud hardware.
+By default, it compiles for the GPU architectures detected by `nvidia-smi` (native targets only),
+and falls back to `nvcc --list-gpu-arch` if GPU detection is unavailable.
+You can override targets with `CUDA_ARCH_LIST` to match cloud hardware.
 
 Examples:
 
@@ -34,11 +35,10 @@ CUDA_PATH=/usr/local/cuda-13.0 make all
 CUDA_ARCH_LIST="120 89 86 75 61" make all
 ```
 
-If your toolkit rejects an older target (for example `compute_61` on newer CUDA),
-set only the architectures supported by that CUDA image:
+For faster cloud builds, compile for only the target GPU:
 
 ```bash
-CUDA_ARCH_LIST="120 89 86 80 75" make all
+CUDA_ARCH_LIST="120" make all
 ```
 
 <b>Limitations:</b>
