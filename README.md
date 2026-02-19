@@ -61,19 +61,28 @@ CUDA_ARCH_LIST="120" make all
 
 <b>-tames</b>		filename with tames. If file not found, software generates tames (option "-max" is required) and saves them to the file. If the file is found, software loads tames to speedup solving. 
 
-<b>-dp-export</b>		run worker in DP export mode (no local key solving path). Values: <code>wild</code>, <code>tame</code>, <code>both</code>.
+<b>-dpf-mode</b>		run worker in DP export mode (no local key solving path). Values: <code>wild</code>, <code>tame</code>, <code>both</code>.
 
-<b>-wild-only</b>		legacy alias for <code>-dp-export wild</code>.
+<b>-dpf-dir</b>		required with DP export mode. Local directory where `.wdp` chunks are written.
 
-<b>-wild-spool-dir</b>		required with "-dp-export". Local directory where `.wdp` chunks are written.
+<b>-dpf-worker</b>		required with DP export mode. Worker identifier stored in every `.wdp` chunk.
 
-<b>-worker-id</b>		required with "-dp-export". Worker identifier stored in every `.wdp` chunk.
+<b>-dpf-session</b>		optional session tag for `.wdp` filenames and metadata. Auto-generated if omitted.
 
-<b>-session-tag</b>		optional session tag for `.wdp` filenames and metadata. Auto-generated if omitted.
+<b>-dpf-flush-records</b>	optional chunk size in DP records for `.wdp` output (default 1000000).
 
-<b>-wild-flush-records</b>	optional chunk size in DP records for `.wdp` output (default 1000000).
+<b>-dpf-flush-sec</b>	optional max seconds before flushing a partial `.wdp` chunk (default 10).
 
-<b>-wild-flush-sec</b>	optional max seconds before flushing a partial `.wdp` chunk (default 10).
+<b>-h</b>, <b>--help</b>		show CLI help.
+
+Compatibility aliases:
+<code>-dp-export</code> -> <code>-dpf-mode</code>,
+<code>-wild-only</code> -> <code>-dpf-mode wild</code>,
+<code>-wild-spool-dir</code> -> <code>-dpf-dir</code>,
+<code>-worker-id</code> -> <code>-dpf-worker</code>,
+<code>-session-tag</code> -> <code>-dpf-session</code>,
+<code>-wild-flush-records</code> -> <code>-dpf-flush-records</code>,
+<code>-wild-flush-sec</code> -> <code>-dpf-flush-sec</code>.
 
 When public key is solved, software displays it and also writes it to "RESULTS.TXT" file. 
 
@@ -89,7 +98,7 @@ Then you can restart software with same parameters to see less K in benchmark mo
 
 Sample command for DP export (wild):
 
-RCKangaroo -dp-export wild -range 134 -dp 30 -start 0 -pubkey 03... -worker-id worker01 -wild-spool-dir /tmp/wildspool
+RCKangaroo -dpf-mode wild -range 134 -dp 30 -start 0 -pubkey 03... -dpf-worker worker01 -dpf-dir /tmp/wildspool
 
 <b>Some notes:</b>
 
