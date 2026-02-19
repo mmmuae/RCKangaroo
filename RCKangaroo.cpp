@@ -163,6 +163,31 @@ void OnSignal(int sig)
 	gStopRequested = true;
 }
 
+void PrintUsage()
+{
+	printf("\r\nUsage:\r\n");
+	printf("  rckangaroo [options]\r\n\r\n");
+	printf("Main solve mode:\r\n");
+	printf("  -pubkey <hex> -start <hex> -range <bits> -dp <bits>\r\n\r\n");
+	printf("Tames generation mode:\r\n");
+	printf("  -tames <file> -max <float> [-range <bits>] [-dp <bits>]\r\n\r\n");
+	printf("DP export mode (worker spool):\r\n");
+	printf("  -dpf-mode <wild|tame|both> -pubkey <hex> -start <hex> -range <bits> -dp <bits>\r\n");
+	printf("  -dpf-worker <id> -dpf-dir <path> [-dpf-session <tag>]\r\n");
+	printf("  [-dpf-flush-records <int>] [-dpf-flush-sec <int>]\r\n\r\n");
+	printf("General options:\r\n");
+	printf("  -gpu <mask>                   Select GPUs, e.g. 035\r\n");
+	printf("  -h, --help                    Show this help\r\n\r\n");
+	printf("Compatibility aliases:\r\n");
+	printf("  -dp-export <wild|tame|both>   Same as -dpf-mode\r\n");
+	printf("  -wild-only                    Same as -dpf-mode wild\r\n");
+	printf("  -worker-id                    Same as -dpf-worker\r\n");
+	printf("  -wild-spool-dir               Same as -dpf-dir\r\n");
+	printf("  -session-tag                  Same as -dpf-session\r\n");
+	printf("  -wild-flush-records           Same as -dpf-flush-records\r\n");
+	printf("  -wild-flush-sec               Same as -dpf-flush-sec\r\n\r\n");
+}
+
 void InitGpus()
 {
 	GpuCnt = 0;
@@ -651,6 +676,12 @@ bool ParseCommandLine(int argc, char* argv[])
 	{
 		char* argument = argv[ci];
 		ci++;
+		if ((strcmp(argument, "-h") == 0) || (strcmp(argument, "--help") == 0) || (strcmp(argument, "-help") == 0))
+		{
+			PrintUsage();
+			return false;
+		}
+		else
 		if (strcmp(argument, "-gpu") == 0)
 		{
 			if (ci >= argc)
@@ -768,16 +799,16 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			gMax = val;
 		}
-		else if (strcmp(argument, "-dp-export") == 0)
+		else if ((strcmp(argument, "-dp-export") == 0) || (strcmp(argument, "-dpf-mode") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -dp-export option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			if (!ParseDpExportMode(argv[ci], gDpExportMode))
 			{
-				printf("error: invalid -dp-export value (expected: wild, tame, both)\r\n");
+				printf("error: invalid %s value (expected: wild, tame, both)\r\n", argument);
 				return false;
 			}
 			ci++;
@@ -787,75 +818,75 @@ bool ParseCommandLine(int argc, char* argv[])
 			// Backward-compatible alias for older worker commands.
 			gDpExportMode = DP_EXPORT_WILD;
 		}
-		else if (strcmp(argument, "-wild-spool-dir") == 0)
+		else if ((strcmp(argument, "-wild-spool-dir") == 0) || (strcmp(argument, "-dpf-dir") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -wild-spool-dir option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			strncpy(gWildSpoolDir, argv[ci], sizeof(gWildSpoolDir) - 1);
 			gWildSpoolDir[sizeof(gWildSpoolDir) - 1] = 0;
 			ci++;
 		}
-		else if (strcmp(argument, "-worker-id") == 0)
+		else if ((strcmp(argument, "-worker-id") == 0) || (strcmp(argument, "-dpf-worker") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -worker-id option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			if (!IsSafeToken(argv[ci], 63))
 			{
-				printf("error: invalid -worker-id (allowed: letters, digits, '_' and '-')\r\n");
+				printf("error: invalid %s (allowed: letters, digits, '_' and '-')\r\n", argument);
 				return false;
 			}
 			strncpy(gWorkerId, argv[ci], sizeof(gWorkerId) - 1);
 			gWorkerId[sizeof(gWorkerId) - 1] = 0;
 			ci++;
 		}
-		else if (strcmp(argument, "-wild-flush-records") == 0)
+		else if ((strcmp(argument, "-wild-flush-records") == 0) || (strcmp(argument, "-dpf-flush-records") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -wild-flush-records option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			int val = atoi(argv[ci]);
 			ci++;
 			if ((val < 1000) || (val > 100000000))
 			{
-				printf("error: invalid value for -wild-flush-records option\r\n");
+				printf("error: invalid value for %s option\r\n", argument);
 				return false;
 			}
 			gWildFlushRecords = (u32)val;
 		}
-		else if (strcmp(argument, "-wild-flush-sec") == 0)
+		else if ((strcmp(argument, "-wild-flush-sec") == 0) || (strcmp(argument, "-dpf-flush-sec") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -wild-flush-sec option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			int val = atoi(argv[ci]);
 			ci++;
 			if ((val < 1) || (val > 3600))
 			{
-				printf("error: invalid value for -wild-flush-sec option\r\n");
+				printf("error: invalid value for %s option\r\n", argument);
 				return false;
 			}
 			gWildFlushSec = (u32)val;
 		}
-		else if (strcmp(argument, "-session-tag") == 0)
+		else if ((strcmp(argument, "-session-tag") == 0) || (strcmp(argument, "-dpf-session") == 0))
 		{
 			if (ci >= argc)
 			{
-				printf("error: missed value after -session-tag option\r\n");
+				printf("error: missed value after %s option\r\n", argument);
 				return false;
 			}
 			if (!IsSafeToken(argv[ci], 63))
 			{
-				printf("error: invalid -session-tag (allowed: letters, digits, '_' and '-')\r\n");
+				printf("error: invalid %s (allowed: letters, digits, '_' and '-')\r\n", argument);
 				return false;
 			}
 			strncpy(gSessionTag, argv[ci], sizeof(gSessionTag) - 1);
@@ -888,7 +919,7 @@ bool ParseCommandLine(int argc, char* argv[])
 		}
 		if (!gWildSpoolDir[0] || !gWorkerId[0])
 		{
-			printf("error: -dp-export requires -wild-spool-dir and -worker-id\r\n");
+			printf("error: -dp-export/-dpf-mode requires -dpf-dir and -dpf-worker\r\n");
 			return false;
 		}
 		GenDefaultSessionTag();
