@@ -59,7 +59,16 @@ typedef char i8;
 // runtime mode
 #define KANG_MODE_MAIN		0
 #define KANG_MODE_GEN_TAME	1
-#define KANG_MODE_WILD_ONLY	2
+#define KANG_MODE_EXPORT_WILD	2
+#define KANG_MODE_EXPORT_TAME	3
+#define KANG_MODE_EXPORT_BOTH	4
+#define KANG_MODE_WILD_ONLY	KANG_MODE_EXPORT_WILD
+
+// host export mode selection
+#define DP_EXPORT_NONE		0
+#define DP_EXPORT_WILD		1
+#define DP_EXPORT_TAME		2
+#define DP_EXPORT_BOTH		3
 
 #define GPU_DP_SIZE			48
 #define MAX_DP_CNT			(256 * 1024)

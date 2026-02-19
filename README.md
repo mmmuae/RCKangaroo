@@ -61,11 +61,13 @@ CUDA_ARCH_LIST="120" make all
 
 <b>-tames</b>		filename with tames. If file not found, software generates tames (option "-max" is required) and saves them to the file. If the file is found, software loads tames to speedup solving. 
 
-<b>-wild-only</b>		run worker in wild-only export mode (no local key solving path).
+<b>-dp-export</b>		run worker in DP export mode (no local key solving path). Values: <code>wild</code>, <code>tame</code>, <code>both</code>.
 
-<b>-wild-spool-dir</b>		required with "-wild-only". Local directory where `.wdp` chunks are written.
+<b>-wild-only</b>		legacy alias for <code>-dp-export wild</code>.
 
-<b>-worker-id</b>		required with "-wild-only". Worker identifier stored in every `.wdp` chunk.
+<b>-wild-spool-dir</b>		required with "-dp-export". Local directory where `.wdp` chunks are written.
+
+<b>-worker-id</b>		required with "-dp-export". Worker identifier stored in every `.wdp` chunk.
 
 <b>-session-tag</b>		optional session tag for `.wdp` filenames and metadata. Auto-generated if omitted.
 
@@ -85,9 +87,9 @@ RCKangaroo.exe -dp 16 -range 76 -tames tames76.dat -max 10
 
 Then you can restart software with same parameters to see less K in benchmark mode or add "-tames tames76.dat" to solve some public key in 76-bit range faster.
 
-Sample command for wild-only export:
+Sample command for DP export (wild):
 
-RCKangaroo -wild-only -range 134 -dp 30 -start 0 -pubkey 03... -worker-id worker01 -wild-spool-dir /tmp/wildspool
+RCKangaroo -dp-export wild -range 134 -dp 30 -start 0 -pubkey 03... -worker-id worker01 -wild-spool-dir /tmp/wildspool
 
 <b>Some notes:</b>
 
