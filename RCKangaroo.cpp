@@ -58,7 +58,7 @@ char gTamesFileName[1024];
 double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
-bool gWildOnlyMode;
+u32 gDpExportMode;
 volatile bool gStopRequested;
 bool gInterruptedStop;
 char gWildSpoolDir[1024];
@@ -78,6 +78,55 @@ struct DBRec
 	u8 type; //0 - tame, 1 - wild1, 2 - wild2
 };
 #pragma pack(pop)
+
+bool IsDpExportEnabled()
+{
+	return gDpExportMode != DP_EXPORT_NONE;
+}
+
+const char* GetDpExportModeName()
+{
+	switch (gDpExportMode)
+	{
+	case DP_EXPORT_WILD:
+		return "wild";
+	case DP_EXPORT_TAME:
+		return "tame";
+	case DP_EXPORT_BOTH:
+		return "both";
+	default:
+		return "none";
+	}
+}
+
+bool ParseDpExportMode(const char* value, u32& outMode)
+{
+	if (!value)
+		return false;
+	char token[16];
+	size_t len = strlen(value);
+	if ((len == 0) || (len >= sizeof(token)))
+		return false;
+	for (size_t i = 0; i < len; i++)
+		token[i] = (char)tolower((u8)value[i]);
+	token[len] = 0;
+	if (strcmp(token, "wild") == 0)
+	{
+		outMode = DP_EXPORT_WILD;
+		return true;
+	}
+	if (strcmp(token, "tame") == 0)
+	{
+		outMode = DP_EXPORT_TAME;
+		return true;
+	}
+	if (strcmp(token, "both") == 0)
+	{
+		outMode = DP_EXPORT_BOTH;
+		return true;
+	}
+	return false;
+}
 
 bool IsSafeToken(const char* value, int maxLen)
 {
@@ -253,13 +302,20 @@ void CheckNewPoints()
 	PntIndex = 0;
 	csAddPoints.Leave();
 
-	if (gWildOnlyMode)
+	if (IsDpExportEnabled())
 	{
 		for (int i = 0; i < cnt; i++)
 		{
 			u8* p = pPntList2 + i * GPU_DP_SIZE;
 			u8 type = p[40];
-			if ((type != WILD1) && (type != WILD2))
+			bool keep = false;
+			if (gDpExportMode == DP_EXPORT_WILD)
+				keep = (type == WILD1) || (type == WILD2);
+			else if (gDpExportMode == DP_EXPORT_TAME)
+				keep = (type == TAME);
+			else if (gDpExportMode == DP_EXPORT_BOTH)
+				keep = (type == TAME) || (type == WILD1) || (type == WILD2);
+			if (!keep)
 				continue;
 			gWildWriter.Enqueue(p, p + 16, type);
 		}
@@ -369,10 +425,11 @@ void ShowStats(u64 tm_start, double exp_ops, double dp_val)
 	int hours = (int)(sec - days * (3600 * 24)) / 3600;
 	int min = (int)(sec - days * (3600 * 24) - hours * 3600) / 60;
 	 
-	if (gWildOnlyMode)
+	if (IsDpExportEnabled())
 	{
 		printf(
-			"WILD: Speed: %d MKeys/s, Err: %d, Exported: %lluK rec, Files: %llu, Pending: %llu, Time: %llud:%02dh:%02dm\r\n",
+			"EXPORT[%s]: Speed: %d MKeys/s, Err: %d, Exported: %lluK rec, Files: %llu, Pending: %llu, Time: %llud:%02dh:%02dm\r\n",
+			GetDpExportModeName(),
 			speed,
 			gTotalErrors,
 			gWildWriter.GetWrittenRecords() / 1000ull,
@@ -559,7 +616,7 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	}
 	CheckNewPoints();
 
-	if (gWildOnlyMode)
+	if (IsDpExportEnabled())
 	{
 		db.Clear();
 		return !gInterruptedStop;
@@ -711,9 +768,24 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			gMax = val;
 		}
+		else if (strcmp(argument, "-dp-export") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -dp-export option\r\n");
+				return false;
+			}
+			if (!ParseDpExportMode(argv[ci], gDpExportMode))
+			{
+				printf("error: invalid -dp-export value (expected: wild, tame, both)\r\n");
+				return false;
+			}
+			ci++;
+		}
 		else if (strcmp(argument, "-wild-only") == 0)
 		{
-			gWildOnlyMode = true;
+			// Backward-compatible alias for older worker commands.
+			gDpExportMode = DP_EXPORT_WILD;
 		}
 		else if (strcmp(argument, "-wild-spool-dir") == 0)
 		{
@@ -802,30 +874,30 @@ bool ParseCommandLine(int argc, char* argv[])
 			printf("error: you must also specify -dp, -range and -start options\r\n");
 			return false;
 		}
-	if (gWildOnlyMode)
+	if (IsDpExportEnabled())
 	{
 		if (gTamesFileName[0] || (gMax > 0.0))
 		{
-			printf("error: -wild-only cannot be combined with -tames or -max\r\n");
+			printf("error: -dp-export cannot be combined with -tames or -max\r\n");
 			return false;
 		}
 		if (gPubKey.x.IsZero() || !gStartSet || !gRange || !gDP)
 		{
-			printf("error: -wild-only requires -pubkey, -start, -range and -dp\r\n");
+			printf("error: -dp-export requires -pubkey, -start, -range and -dp\r\n");
 			return false;
 		}
 		if (!gWildSpoolDir[0] || !gWorkerId[0])
 		{
-			printf("error: -wild-only requires -wild-spool-dir and -worker-id\r\n");
+			printf("error: -dp-export requires -wild-spool-dir and -worker-id\r\n");
 			return false;
 		}
 		GenDefaultSessionTag();
 	}
 	if (gTamesFileName[0] && !IsFileExist(gTamesFileName))
 	{
-		if (gWildOnlyMode)
+		if (IsDpExportEnabled())
 		{
-			printf("error: -tames is not allowed in -wild-only mode\r\n");
+			printf("error: -tames is not allowed in -dp-export mode\r\n");
 			return false;
 		}
 		if (gMax == 0.0)
@@ -874,7 +946,7 @@ int main(int argc, char* argv[])
 	gMax = 0.0;
 	gGenMode = false;
 	gIsOpsLimit = false;
-	gWildOnlyMode = false;
+	gDpExportMode = DP_EXPORT_NONE;
 	gStopRequested = false;
 	gInterruptedStop = false;
 	gWildFlushRecords = 1000000;
@@ -903,9 +975,10 @@ int main(int argc, char* argv[])
 	gTotalErrors = 0;
 	IsBench = gPubKey.x.IsZero();
 
-	if (gWildOnlyMode)
+	if (IsDpExportEnabled())
 	{
-		printf("\r\nWILD-ONLY MODE\r\n");
+		printf("\r\nDP EXPORT MODE\r\n");
+		printf("DP export type: %s\r\n", GetDpExportModeName());
 		printf("Worker ID: %s\r\n", gWorkerId);
 		printf("Session tag: %s\r\n", gSessionTag);
 		printf("Spool dir: %s\r\n", gWildSpoolDir);
@@ -929,16 +1002,16 @@ int main(int argc, char* argv[])
 				gWildFlushRecords,
 				gWildFlushSec))
 		{
-			printf("FATAL ERROR: cannot initialize wild spool writer\r\n");
+			printf("FATAL ERROR: cannot initialize DP spool writer\r\n");
 			goto label_end;
 		}
 		if (!SolvePoint(PntToSolve, gRange, gDP, &pk_dummy))
 		{
 			if (!gInterruptedStop)
-				printf("FATAL ERROR: wild-only run failed\r\n");
+				printf("FATAL ERROR: dp-export run failed\r\n");
 		}
 		gWildWriter.StopAndFlush();
-		printf("Wild export done. Files: %llu, Records: %llu, Dropped: %llu\r\n",
+		printf("DP export done. Files: %llu, Records: %llu, Dropped: %llu\r\n",
 			gWildWriter.GetWrittenFiles(),
 			gWildWriter.GetWrittenRecords(),
 			gWildWriter.GetDroppedRecords());
@@ -1034,8 +1107,8 @@ int main(int argc, char* argv[])
 				//if (TotalSolved >= 100) break; //dbg
 			}
 		}
-	label_end:
-	if (gWildOnlyMode)
+label_end:
+	if (IsDpExportEnabled())
 		gWildWriter.StopAndFlush();
 	for (int i = 0; i < GpuCnt; i++)
 		delete GpuKangs[i];

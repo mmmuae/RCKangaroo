@@ -205,14 +205,14 @@ bool WildSpoolWriter::Start(
 	return true;
 }
 
-void WildSpoolWriter::Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 wildType)
+void WildSpoolWriter::Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 dpType)
 {
 	if (!xPrefix || !distanceRaw24)
 		return;
 	RawRecord rec;
 	memcpy(rec.xPrefix, xPrefix, sizeof(rec.xPrefix));
 	memcpy(rec.distanceRaw24, distanceRaw24, sizeof(rec.distanceRaw24));
-	rec.wildType = wildType;
+	rec.dpType = dpType;
 	rec.flags = 0;
 	rec.reserved = 0;
 

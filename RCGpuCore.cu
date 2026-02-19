@@ -495,8 +495,10 @@ __device__ __forceinline__ void BuildDP(const TKparams& Kparams, int kang_ind, u
 	*(int4*)&DPs[0] = rx;
 	*(int4*)&DPs[4] = ((int4*)d)[0];
 	*(u64*)&DPs[8] = d[2];
-	if (Kparams.RunMode == KANG_MODE_WILD_ONLY)
+	if (Kparams.RunMode == KANG_MODE_EXPORT_WILD)
 		DPs[10] = (kang_ind < (Kparams.KangCnt / 2)) ? WILD1 : WILD2;
+	else if ((Kparams.RunMode == KANG_MODE_GEN_TAME) || (Kparams.RunMode == KANG_MODE_EXPORT_TAME))
+		DPs[10] = TAME;
 	else
 		DPs[10] = 3 * kang_ind / Kparams.KangCnt; //kang type
 }
@@ -872,8 +874,10 @@ __global__ void KernelGen(const TKparams Kparams)
 		if (Kparams.RunMode != KANG_MODE_GEN_TAME)
 		{
 			bool apply_offset = false;
-			if (Kparams.RunMode == KANG_MODE_WILD_ONLY)
+			if (Kparams.RunMode == KANG_MODE_EXPORT_WILD)
 				apply_offset = true;
+			else if (Kparams.RunMode == KANG_MODE_EXPORT_TAME)
+				apply_offset = false;
 			else if (kang_ind >= Kparams.KangCnt / 3)
 				apply_offset = true;
 			if (apply_offset)

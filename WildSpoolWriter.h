@@ -31,7 +31,7 @@ public:
 		u32 dpBits,
 		u32 flushRecords,
 		u32 flushSec);
-	void Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 wildType);
+	void Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 dpType);
 	void StopAndFlush();
 
 	u64 GetWrittenRecords() const;
@@ -44,7 +44,7 @@ private:
 	{
 		u8 xPrefix[12];
 		u8 distanceRaw24[24];
-		u8 wildType;
+		u8 dpType;
 		u8 flags;
 		u16 reserved;
 	};

@@ -15,7 +15,7 @@ void CallGpuKernelGen(TKparams Kparams);
 void CallGpuKernelABC(TKparams Kparams);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
-extern bool gWildOnlyMode;
+extern u32 gDpExportMode;
 
 int RCGpuKang::CalcKangCnt()
 {
@@ -55,8 +55,12 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	Kparams.KernelA_LDS_Size = 64 * JMP_CNT + 16 * Kparams.BlockSize;
 	Kparams.KernelB_LDS_Size = 64 * JMP_CNT;
 	Kparams.KernelC_LDS_Size = 96 * JMP_CNT;
-	if (gWildOnlyMode)
-		Kparams.RunMode = KANG_MODE_WILD_ONLY;
+	if (gDpExportMode == DP_EXPORT_WILD)
+		Kparams.RunMode = KANG_MODE_EXPORT_WILD;
+	else if (gDpExportMode == DP_EXPORT_TAME)
+		Kparams.RunMode = KANG_MODE_EXPORT_TAME;
+	else if (gDpExportMode == DP_EXPORT_BOTH)
+		Kparams.RunMode = KANG_MODE_EXPORT_BOTH;
 	else if (gGenMode)
 		Kparams.RunMode = KANG_MODE_GEN_TAME;
 	else
@@ -291,8 +295,18 @@ void RCGpuKang::GenerateRndDistances()
 	for (int i = 0; i < KangCnt; i++)
 	{
 		EcInt d;
-		if (!gWildOnlyMode && i < KangCnt / 3)
+		if ((Kparams.RunMode == KANG_MODE_GEN_TAME) || (Kparams.RunMode == KANG_MODE_EXPORT_TAME))
 			d.RndBits(Range - 4); //TAME kangs
+		else if ((Kparams.RunMode == KANG_MODE_MAIN) || (Kparams.RunMode == KANG_MODE_EXPORT_BOTH))
+		{
+			if (i < KangCnt / 3)
+				d.RndBits(Range - 4); //TAME kangs
+			else
+			{
+				d.RndBits(Range - 1);
+				d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
+			}
+		}
 		else
 		{
 			d.RndBits(Range - 1);
@@ -364,12 +378,16 @@ bool RCGpuKang::Start()
 	PntB.SaveToBuffer64(buf_PntB);
 	for (int i = 0; i < KangCnt; i++)
 	{
-		if (gWildOnlyMode)
+		if (Kparams.RunMode == KANG_MODE_EXPORT_WILD)
 		{
 			if (i < KangCnt / 2)
 				memcpy(RndPnts[i].x, buf_PntA, 64);
 			else
 				memcpy(RndPnts[i].x, buf_PntB, 64);
+		}
+		else if ((Kparams.RunMode == KANG_MODE_GEN_TAME) || (Kparams.RunMode == KANG_MODE_EXPORT_TAME))
+		{
+			memset(RndPnts[i].x, 0, 64);
 		}
 		else
 		{
