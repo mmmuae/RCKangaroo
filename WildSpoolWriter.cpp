@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -333,8 +334,17 @@ bool WildSpoolWriter::WriteChunk(const std::vector<RawRecord>& records)
 		return true;
 
 	char seqBuf[32];
+	char uniqBuf[64];
+	u64 createdMs = UnixTimeMs();
+	u32 entropy = (u32)((createdMs ^ (chunkSeq << 13) ^ (u64)rand()) & 0xFFFFFFFFu);
 	snprintf(seqBuf, sizeof(seqBuf), "%08llu", static_cast<unsigned long long>(chunkSeq++));
-	std::string stem = "WDP." + workerId + "." + sessionTag + "." + std::string(seqBuf);
+	snprintf(
+		uniqBuf,
+		sizeof(uniqBuf),
+		"%llu.%08X",
+		static_cast<unsigned long long>(createdMs),
+		(unsigned int)entropy);
+	std::string stem = "WDP." + workerId + "." + sessionTag + "." + std::string(seqBuf) + "." + std::string(uniqBuf);
 	std::string finalPath = spoolDir + "/" + stem + ".wdp";
 	std::string partPath = finalPath + ".part";
 
@@ -350,7 +360,7 @@ bool WildSpoolWriter::WriteChunk(const std::vector<RawRecord>& records)
 	CopyTextField(header.targetPubkey, sizeof(header.targetPubkey), targetPubkey);
 	CopyTextField(header.startOffset, sizeof(header.startOffset), startOffset);
 	header.chunkSeq = chunkSeq - 1;
-	header.createdUnixMs = UnixTimeMs();
+	header.createdUnixMs = createdMs;
 	header.recordCount = static_cast<u32>(records.size());
 
 	const u8* bodyPtr = reinterpret_cast<const u8*>(records.data());
