@@ -139,7 +139,19 @@ bool EnsureDirRecursive(const std::string& path)
 
 u64 UnixTimeMs()
 {
-	return static_cast<u64>(time(nullptr)) * 1000ull;
+	using namespace std::chrono;
+	return static_cast<u64>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+}
+
+u32 Fnv1a32(const std::string& text)
+{
+	u32 h = 2166136261u;
+	for (size_t i = 0; i < text.size(); ++i)
+	{
+		h ^= static_cast<u8>(text[i]);
+		h *= 16777619u;
+	}
+	return h;
 }
 } // namespace
 
@@ -333,18 +345,19 @@ bool WildSpoolWriter::WriteChunk(const std::vector<RawRecord>& records)
 	if (records.empty())
 		return true;
 
-	char seqBuf[32];
-	char uniqBuf[64];
+	char sidBuf[8];
+	char seqBuf[16];
+	char tsBuf[16];
+	char rndBuf[16];
 	u64 createdMs = UnixTimeMs();
-	u32 entropy = (u32)((createdMs ^ (chunkSeq << 13) ^ (u64)rand()) & 0xFFFFFFFFu);
-	snprintf(seqBuf, sizeof(seqBuf), "%08llu", static_cast<unsigned long long>(chunkSeq++));
-	snprintf(
-		uniqBuf,
-		sizeof(uniqBuf),
-		"%llu.%08X",
-		static_cast<unsigned long long>(createdMs),
-		(unsigned int)entropy);
-	std::string stem = "WDP." + workerId + "." + sessionTag + "." + std::string(seqBuf) + "." + std::string(uniqBuf);
+	u64 seq = chunkSeq++;
+	u32 entropy = static_cast<u32>((createdMs ^ (seq << 13) ^ static_cast<u64>(rand())) & 0xFFFFFFFFu);
+	u32 sid = Fnv1a32(workerId + "|" + sessionTag) & 0xFFFFu;
+	snprintf(sidBuf, sizeof(sidBuf), "%04X", static_cast<unsigned int>(sid));
+	snprintf(seqBuf, sizeof(seqBuf), "%08llX", static_cast<unsigned long long>(seq & 0xFFFFFFFFull));
+	snprintf(tsBuf, sizeof(tsBuf), "%08llX", static_cast<unsigned long long>(createdMs & 0xFFFFFFFFull));
+	snprintf(rndBuf, sizeof(rndBuf), "%08X", static_cast<unsigned int>(entropy));
+	std::string stem = "WDP." + std::string(sidBuf) + "." + std::string(seqBuf) + "." + std::string(tsBuf) + "." + std::string(rndBuf);
 	std::string finalPath = spoolDir + "/" + stem + ".wdp";
 	std::string partPath = finalPath + ".part";
 
@@ -359,7 +372,7 @@ bool WildSpoolWriter::WriteChunk(const std::vector<RawRecord>& records)
 	CopyTextField(header.sessionTag, sizeof(header.sessionTag), sessionTag);
 	CopyTextField(header.targetPubkey, sizeof(header.targetPubkey), targetPubkey);
 	CopyTextField(header.startOffset, sizeof(header.startOffset), startOffset);
-	header.chunkSeq = chunkSeq - 1;
+	header.chunkSeq = seq;
 	header.createdUnixMs = createdMs;
 	header.recordCount = static_cast<u32>(records.size());
 
