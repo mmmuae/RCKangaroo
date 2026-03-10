@@ -377,7 +377,18 @@ void RCGpuKang::GenerateRndDistances()
 	bool useStratifiedWildLayout = (Kparams.RunMode == KANG_MODE_EXPORT_WILD) && (Kparams.WildStartLayout == WILD_START_STRATIFIED);
 	EcInt stratifiedUpperExclusive;
 	if (useStratifiedWildLayout)
+	{
 		BuildStratifiedUpperExclusive(stratifiedUpperExclusive, Range, Kparams.WildStartSlices, Kparams.WildStartSliceIndex);
+		if (stratifiedUpperExclusive.IsZero())
+			printf("GPU %d: warning: stratified slice is empty (range too small or too many slices)\r\n", CudaIndex);
+		else
+		{
+			EcInt kangLimit;
+			kangLimit.Set((u64)KangCnt);
+			if (!kangLimit.IsLessThanU(stratifiedUpperExclusive))
+				printf("GPU %d: warning: stratified slice bound is smaller than kangaroo count (%llu kangaroos)\r\n", CudaIndex, (unsigned long long)KangCnt);
+		}
+	}
 
 	for (int i = 0; i < KangCnt; i++)
 	{

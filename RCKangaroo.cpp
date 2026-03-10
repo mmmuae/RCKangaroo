@@ -124,90 +124,49 @@ const char* GetWildStartLayoutName()
 	return (gWildStartLayout == WILD_START_STRATIFIED) ? "stratified" : "random";
 }
 
-bool ParseDpExportMode(const char* value, u32& outMode)
+static bool MatchTokenCI(const char* value, char* buf, size_t bufSize)
 {
 	if (!value)
 		return false;
-	char token[16];
 	size_t len = strlen(value);
-	if ((len == 0) || (len >= sizeof(token)))
+	if ((len == 0) || (len >= bufSize))
 		return false;
 	for (size_t i = 0; i < len; i++)
-		token[i] = (char)tolower((u8)value[i]);
-	token[len] = 0;
-	if (strcmp(token, "wild") == 0)
-	{
-		outMode = DP_EXPORT_WILD;
-		return true;
-	}
-	if (strcmp(token, "tame") == 0)
-	{
-		outMode = DP_EXPORT_TAME;
-		return true;
-	}
-	if (strcmp(token, "both") == 0)
-	{
-		outMode = DP_EXPORT_BOTH;
-		return true;
-	}
+		buf[i] = (char)tolower((u8)value[i]);
+	buf[len] = 0;
+	return true;
+}
+
+bool ParseDpExportMode(const char* value, u32& outMode)
+{
+	char token[16];
+	if (!MatchTokenCI(value, token, sizeof(token)))
+		return false;
+	if (strcmp(token, "wild") == 0)  { outMode = DP_EXPORT_WILD; return true; }
+	if (strcmp(token, "tame") == 0)  { outMode = DP_EXPORT_TAME; return true; }
+	if (strcmp(token, "both") == 0)  { outMode = DP_EXPORT_BOTH; return true; }
 	return false;
 }
 
 bool ParseWildFamily(const char* value, u32& outFamily)
 {
-	if (!value)
-		return false;
 	char token[24];
-	size_t len = strlen(value);
-	if ((len == 0) || (len >= sizeof(token)))
+	if (!MatchTokenCI(value, token, sizeof(token)))
 		return false;
-	for (size_t i = 0; i < len; i++)
-		token[i] = (char)tolower((u8)value[i]);
-	token[len] = 0;
-	if (strcmp(token, "legacy") == 0)
-	{
-		outFamily = WILD_FAMILY_LEGACY;
-		return true;
-	}
-	if (strcmp(token, "mix64a") == 0)
-	{
-		outFamily = WILD_FAMILY_MIX64A;
-		return true;
-	}
-	if (strcmp(token, "mix64b") == 0)
-	{
-		outFamily = WILD_FAMILY_MIX64B;
-		return true;
-	}
-	if (strcmp(token, "mix64c") == 0)
-	{
-		outFamily = WILD_FAMILY_MIX64C;
-		return true;
-	}
+	if (strcmp(token, "legacy") == 0) { outFamily = WILD_FAMILY_LEGACY; return true; }
+	if (strcmp(token, "mix64a") == 0) { outFamily = WILD_FAMILY_MIX64A; return true; }
+	if (strcmp(token, "mix64b") == 0) { outFamily = WILD_FAMILY_MIX64B; return true; }
+	if (strcmp(token, "mix64c") == 0) { outFamily = WILD_FAMILY_MIX64C; return true; }
 	return false;
 }
 
 bool ParseWildStartLayout(const char* value, u32& outLayout)
 {
-	if (!value)
-		return false;
 	char token[24];
-	size_t len = strlen(value);
-	if ((len == 0) || (len >= sizeof(token)))
+	if (!MatchTokenCI(value, token, sizeof(token)))
 		return false;
-	for (size_t i = 0; i < len; i++)
-		token[i] = (char)tolower((u8)value[i]);
-	token[len] = 0;
-	if (strcmp(token, "random") == 0)
-	{
-		outLayout = WILD_START_RANDOM;
-		return true;
-	}
-	if (strcmp(token, "stratified") == 0)
-	{
-		outLayout = WILD_START_STRATIFIED;
-		return true;
-	}
+	if (strcmp(token, "random") == 0)     { outLayout = WILD_START_RANDOM;     return true; }
+	if (strcmp(token, "stratified") == 0) { outLayout = WILD_START_STRATIFIED; return true; }
 	return false;
 }
 
@@ -264,6 +223,11 @@ void AppendAutoWildSessionSuffix()
 	char base[sizeof(gSessionTag)];
 	strncpy(base, gSessionTag, sizeof(base) - 1);
 	base[sizeof(base) - 1] = 0;
+
+	size_t need = strlen(base) + 1 + strlen(suffix) + 1;
+	if (need > sizeof(gSessionTag))
+		printf("warning: session tag truncated (need %d, have %d bytes)\r\n", (int)need, (int)sizeof(gSessionTag));
+
 	snprintf(gSessionTag, sizeof(gSessionTag), "%s_%s", base, suffix);
 }
 
@@ -272,10 +236,10 @@ u64 GetWildFamilyJumpSeed()
 	if ((gDpExportMode != DP_EXPORT_WILD) || (gWildFamily == WILD_FAMILY_LEGACY))
 		return 0;
 	if (gWildFamily == WILD_FAMILY_MIX64A)
-		return 0x9E3779B97F4A7C15ull;
+		return WILD_SALT_MIX64A;
 	if (gWildFamily == WILD_FAMILY_MIX64B)
-		return 0xD1B54A32D192ED03ull;
-	return 0x94D049BB133111EBull;
+		return WILD_SALT_MIX64B;
+	return WILD_SALT_MIX64C;
 }
 
 void OnSignal(int sig)

@@ -76,6 +76,14 @@ typedef char i8;
 #define WILD_FAMILY_MIX64B	2
 #define WILD_FAMILY_MIX64C	3
 
+// family salt constants (shared between CPU and GPU code)
+// Each must be distinct from every other salt AND from Mix64's internal
+// multipliers (0xBF58476D1CE4E5B9, 0x94D049BB133111EB) to maximize
+// walk diversification.
+#define WILD_SALT_MIX64A	0x9E3779B97F4A7C15ull
+#define WILD_SALT_MIX64B	0xD1B54A32D192ED03ull
+#define WILD_SALT_MIX64C	0xC6A4A7935BD1E995ull
+
 // wild export start layout
 #define WILD_START_RANDOM	0
 #define WILD_START_STRATIFIED	1
