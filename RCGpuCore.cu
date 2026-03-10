@@ -22,6 +22,41 @@ __device__ __constant__ u64 jmp2_table[8 * JMP_CNT];
 
 extern __shared__ u64 LDS[]; 
 
+__device__ __forceinline__ u64 Rotl64(u64 v, int r)
+{
+	return (v << r) | (v >> (64 - r));
+}
+
+__device__ __forceinline__ u64 Mix64(u64 x)
+{
+	x ^= x >> 30;
+	x *= 0xBF58476D1CE4E5B9ull;
+	x ^= x >> 27;
+	x *= 0x94D049BB133111EBull;
+	x ^= x >> 31;
+	return x;
+}
+
+__device__ __forceinline__ u64 WildFamilySalt(u32 family)
+{
+	if (family == WILD_FAMILY_MIX64A)
+		return 0x9E3779B97F4A7C15ull;
+	if (family == WILD_FAMILY_MIX64B)
+		return 0xD1B54A32D192ED03ull;
+	if (family == WILD_FAMILY_MIX64C)
+		return 0x94D049BB133111EBull;
+	return 0ull;
+}
+
+__device__ __forceinline__ u32 SelectJumpIndex(const TKparams& Kparams, const u64* x)
+{
+	if ((Kparams.RunMode != KANG_MODE_EXPORT_WILD) || (Kparams.WildFamily == WILD_FAMILY_LEGACY))
+		return (u32)(x[0] & JMP_MASK);
+	u64 h = x[0] ^ Rotl64(x[1], 17) ^ Rotl64(x[2], 31) ^ Rotl64(x[3], 47);
+	h ^= WildFamilySalt(Kparams.WildFamily);
+	return (u32)(Mix64(h) & JMP_MASK);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef OLD_GPU
@@ -86,7 +121,7 @@ __global__ void KernelA(const TKparams Kparams)
 		
 		//first group
 		LOAD_VAL_256(x, L2x, 0);
-		jmp_ind = x[0] % JMP_CNT;
+		jmp_ind = SelectJumpIndex(Kparams, x);
 		jmp_table = ((L1S2 >> 0) & 1) ? jmp2_table : jmp1_table;
 		Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 		SubModP(inverse, x, jmp_x);
@@ -95,7 +130,7 @@ __global__ void KernelA(const TKparams Kparams)
 		for (int group = 1; group < PNT_GROUP_CNT; group++)
 		{
 			LOAD_VAL_256(x, L2x, group);
-			jmp_ind = x[0] % JMP_CNT;
+			jmp_ind = SelectJumpIndex(Kparams, x);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			SubModP(tmp, x, jmp_x);
@@ -113,7 +148,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			LOAD_VAL_256(x0, L2x, group);
             LOAD_VAL_256(y0, L2y, group);
-			jmp_ind = x0[0] % JMP_CNT;
+			jmp_ind = SelectJumpIndex(Kparams, x0);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			Copy_int4_x2(jmp_y, jmp_table + 8 * jmp_ind + 4);
@@ -148,7 +183,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			if (((L1S2 >> group) & 1) == 0) //normal mode, check L1S2 loop
 			{
-				u32 jmp_next = x[0] % JMP_CNT;
+				u32 jmp_next = SelectJumpIndex(Kparams, x);
 				jmp_next |= ((u32)y[0] & 1) ? 0 : INV_FLAG; //inverted
 				L1S2 |= (jmp_ind == jmp_next) ? (1u << group) : 0; //loop L1S2 detected
 			}
@@ -269,7 +304,7 @@ __global__ void KernelA(const TKparams Kparams)
 	for (int group = 0; group < PNT_GROUP_CNT; group++)
 	{
 		LOAD_VAL_256_m(x, Lx, group);
-		jmp_ind = x[0] % JMP_CNT;
+		jmp_ind = SelectJumpIndex(Kparams, x);
 		jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 		Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 		SubModP(tmp, x, jmp_x);
@@ -317,7 +352,7 @@ __global__ void KernelA(const TKparams Kparams)
 			}
 			LOAD_VAL_256_m(y0, Ly, group);
 
-			jmp_ind = x0[0] % JMP_CNT;
+			jmp_ind = SelectJumpIndex(Kparams, x0);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			if (cached)
 			{
@@ -358,7 +393,7 @@ __global__ void KernelA(const TKparams Kparams)
 					LOAD_VAL_256_m(t_cache, Ls, (group + g_inc + g_inc) / 2);
 					cached = true;				
 					LOAD_VAL_256_m(x0_cache, Lx, group + g_inc);
-					u32 jmp_tmp = x0_cache[0] % JMP_CNT;
+					u32 jmp_tmp = SelectJumpIndex(Kparams, x0_cache);
 					__align__(16) u64 dx2[4];
 					u64* jmp_table_tmp = ((L1S2 >> (group + g_inc)) & 1) ? jmp2_table : jmp1_table;
 					Copy_int4_x2(jmpx_cached, jmp_table_tmp + 8 * jmp_tmp);
@@ -386,7 +421,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			if (((L1S2 >> group) & 1) == 0) //normal mode, check L1S2 loop
 			{
-				u32 jmp_next = x[0] % JMP_CNT;
+				u32 jmp_next = SelectJumpIndex(Kparams, x);
 				jmp_next |= ((u32)y[0] & 1) ? 0 : INV_FLAG; //inverted
 				L1S2 |= (jmp_ind == jmp_next) ? (1ull << group) : 0; //loop L1S2 detected
 			}
@@ -420,7 +455,7 @@ __global__ void KernelA(const TKparams Kparams)
 			}
 		
 			//preps to calc next inv
-			jmp_ind = x[0] % JMP_CNT;
+			jmp_ind = SelectJumpIndex(Kparams, x);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			SubModP(dx, x, jmp_x);
@@ -718,7 +753,7 @@ __global__ void KernelC(const TKparams Kparams)
 		LOAD_VAL_256(x0, x_last, gr_ind);
 		LOAD_VAL_256(y0, y_last, gr_ind);
 
-		u32 jmp_ind = x0[0] % JMP_CNT;
+		u32 jmp_ind = SelectJumpIndex(Kparams, x0);
 		Copy_int4_x2(jmp_x, jmp3_table + 12 * jmp_ind);
 		Copy_int4_x2(jmp_y, jmp3_table + 12 * jmp_ind + 4);
 		SubModP(inverse, x0, jmp_x);

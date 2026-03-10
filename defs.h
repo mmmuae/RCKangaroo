@@ -70,6 +70,16 @@ typedef char i8;
 #define DP_EXPORT_TAME		2
 #define DP_EXPORT_BOTH		3
 
+// wild walk family (safe variants keep DP semantics unchanged)
+#define WILD_FAMILY_LEGACY	0
+#define WILD_FAMILY_MIX64A	1
+#define WILD_FAMILY_MIX64B	2
+#define WILD_FAMILY_MIX64C	3
+
+// wild export start layout
+#define WILD_START_RANDOM	0
+#define WILD_START_STRATIFIED	1
+
 #define GPU_DP_SIZE			48
 #define MAX_DP_CNT			(256 * 1024)
 
@@ -109,9 +119,13 @@ struct TKparams
 	u32* dbg_buf;
 	u32* LoopedKangs;
 	u32 RunMode; // KANG_MODE_*
+	u32 WildFamily; // WILD_FAMILY_* (used only in export wild mode)
+	u32 WildStartLayout; // WILD_START_*
+	u32 WildStartSlices; // >0 only when WildStartLayout == WILD_START_STRATIFIED
+	u32 WildStartSliceIndex;
 
 	u32 KernelA_LDS_Size;
 	u32 KernelB_LDS_Size;
-	u32 KernelC_LDS_Size;	
+	u32 KernelC_LDS_Size;
 };
 

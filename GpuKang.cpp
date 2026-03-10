@@ -16,6 +16,77 @@ void CallGpuKernelABC(TKparams Kparams);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
 extern u32 gDpExportMode;
+extern u32 gWildFamily;
+extern u32 gWildStartLayout;
+extern u32 gWildStartSlices;
+extern u32 gWildStartSliceIndex;
+
+static bool EcIntGetBit(const EcInt& value, int bitIndex)
+{
+	int limb = bitIndex / 64;
+	int bit = bitIndex % 64;
+	return ((value.data[limb] >> bit) & 1ull) != 0ull;
+}
+
+static void EcIntSetBit(EcInt& value, int bitIndex)
+{
+	int limb = bitIndex / 64;
+	int bit = bitIndex % 64;
+	value.data[limb] |= (1ull << bit);
+}
+
+static void DivModEcIntByU32(const EcInt& dividend, u32 divisor, EcInt& quotient, u32& remainder)
+{
+	quotient.SetZero();
+	u64 rem = 0;
+	for (int bit = 319; bit >= 0; bit--)
+	{
+		rem = (rem << 1) | (EcIntGetBit(dividend, bit) ? 1ull : 0ull);
+		if (rem >= divisor)
+		{
+			rem -= divisor;
+			EcIntSetBit(quotient, bit);
+		}
+	}
+	remainder = (u32)rem;
+}
+
+static void BuildStratifiedUpperExclusive(EcInt& upperExclusive, int rangeBits, u32 slices, u32 sliceIndex)
+{
+	// Number of valid half-domain buckets for this slice:
+	// count = floor((2^(rangeBits-2)-1-sliceIndex)/slices) + 1
+	EcInt maxBucket;
+	EcInt one;
+	one.Set(1);
+	maxBucket.Assign(one);
+	maxBucket.ShiftLeft(rangeBits - 2);
+	maxBucket.Sub(one);
+
+	if (sliceIndex)
+	{
+		EcInt offset;
+		offset.Set(sliceIndex);
+		maxBucket.Sub(offset);
+	}
+
+	u32 rem = 0;
+	DivModEcIntByU32(maxBucket, slices, upperExclusive, rem);
+	upperExclusive.Add(one);
+}
+
+static void GenerateStratifiedWildDistance(EcInt& out, EcInt& upperExclusive, u32 slices, u32 sliceIndex)
+{
+	EcInt bucket;
+	bucket.RndMax(upperExclusive);
+	out.Mul_u64(bucket, slices);
+	if (sliceIndex)
+	{
+		EcInt offset;
+		offset.Set(sliceIndex);
+		out.Add(offset);
+	}
+	out.ShiftLeft(1);
+}
 
 int RCGpuKang::CalcKangCnt()
 {
@@ -65,6 +136,17 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		Kparams.RunMode = KANG_MODE_GEN_TAME;
 	else
 		Kparams.RunMode = KANG_MODE_MAIN;
+	Kparams.WildFamily = WILD_FAMILY_LEGACY;
+	Kparams.WildStartLayout = WILD_START_RANDOM;
+	Kparams.WildStartSlices = 1;
+	Kparams.WildStartSliceIndex = 0;
+	if (Kparams.RunMode == KANG_MODE_EXPORT_WILD)
+	{
+		Kparams.WildFamily = gWildFamily;
+		Kparams.WildStartLayout = gWildStartLayout;
+		Kparams.WildStartSlices = gWildStartSlices;
+		Kparams.WildStartSliceIndex = gWildStartSliceIndex;
+	}
 
 //allocate gpu mem
 	u64 size;
@@ -292,6 +374,11 @@ void RCGpuKang::Stop()
 
 void RCGpuKang::GenerateRndDistances()
 {
+	bool useStratifiedWildLayout = (Kparams.RunMode == KANG_MODE_EXPORT_WILD) && (Kparams.WildStartLayout == WILD_START_STRATIFIED);
+	EcInt stratifiedUpperExclusive;
+	if (useStratifiedWildLayout)
+		BuildStratifiedUpperExclusive(stratifiedUpperExclusive, Range, Kparams.WildStartSlices, Kparams.WildStartSliceIndex);
+
 	for (int i = 0; i < KangCnt; i++)
 	{
 		EcInt d;
@@ -309,8 +396,13 @@ void RCGpuKang::GenerateRndDistances()
 		}
 		else
 		{
-			d.RndBits(Range - 1);
-			d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
+			if (useStratifiedWildLayout)
+				GenerateStratifiedWildDistance(d, stratifiedUpperExclusive, Kparams.WildStartSlices, Kparams.WildStartSliceIndex);
+			else
+			{
+				d.RndBits(Range - 1);
+				d.data[0] &= 0xFFFFFFFFFFFFFFFE; //must be even
+			}
 		}
 		memcpy(RndPnts[i].priv, d.data, 24);
 	}
