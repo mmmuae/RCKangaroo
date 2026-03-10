@@ -386,7 +386,7 @@ void RCGpuKang::GenerateRndDistances()
 			EcInt kangLimit;
 			kangLimit.Set((u64)KangCnt);
 			if (!kangLimit.IsLessThanU(stratifiedUpperExclusive))
-				printf("GPU %d: warning: stratified slice has fewer unique starts (%llu kangaroos vs slice bound)\r\n", CudaIndex, (unsigned long long)KangCnt);
+				printf("GPU %d: warning: stratified slice bound is smaller than kangaroo count (%llu kangaroos)\r\n", CudaIndex, (unsigned long long)KangCnt);
 		}
 	}
 
