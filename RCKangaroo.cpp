@@ -59,6 +59,10 @@ double gMax;
 bool gGenMode; //tames generation mode
 bool gIsOpsLimit;
 u32 gDpExportMode;
+u32 gWildFamily;
+u32 gWildStartLayout;
+u32 gWildStartSlices;
+u32 gWildStartSliceIndex;
 volatile bool gStopRequested;
 bool gInterruptedStop;
 char gWildSpoolDir[1024];
@@ -68,6 +72,7 @@ char gPubKeyRaw[140];
 char gStartRaw[140];
 u32 gWildFlushRecords;
 u32 gWildFlushSec;
+bool gSessionTagProvided;
 WildSpoolWriter gWildWriter;
 
 #pragma pack(push, 1)
@@ -99,6 +104,26 @@ const char* GetDpExportModeName()
 	}
 }
 
+const char* GetWildFamilyName()
+{
+	switch (gWildFamily)
+	{
+	case WILD_FAMILY_MIX64A:
+		return "mix64a";
+	case WILD_FAMILY_MIX64B:
+		return "mix64b";
+	case WILD_FAMILY_MIX64C:
+		return "mix64c";
+	default:
+		return "legacy";
+	}
+}
+
+const char* GetWildStartLayoutName()
+{
+	return (gWildStartLayout == WILD_START_STRATIFIED) ? "stratified" : "random";
+}
+
 bool ParseDpExportMode(const char* value, u32& outMode)
 {
 	if (!value)
@@ -123,6 +148,64 @@ bool ParseDpExportMode(const char* value, u32& outMode)
 	if (strcmp(token, "both") == 0)
 	{
 		outMode = DP_EXPORT_BOTH;
+		return true;
+	}
+	return false;
+}
+
+bool ParseWildFamily(const char* value, u32& outFamily)
+{
+	if (!value)
+		return false;
+	char token[24];
+	size_t len = strlen(value);
+	if ((len == 0) || (len >= sizeof(token)))
+		return false;
+	for (size_t i = 0; i < len; i++)
+		token[i] = (char)tolower((u8)value[i]);
+	token[len] = 0;
+	if (strcmp(token, "legacy") == 0)
+	{
+		outFamily = WILD_FAMILY_LEGACY;
+		return true;
+	}
+	if (strcmp(token, "mix64a") == 0)
+	{
+		outFamily = WILD_FAMILY_MIX64A;
+		return true;
+	}
+	if (strcmp(token, "mix64b") == 0)
+	{
+		outFamily = WILD_FAMILY_MIX64B;
+		return true;
+	}
+	if (strcmp(token, "mix64c") == 0)
+	{
+		outFamily = WILD_FAMILY_MIX64C;
+		return true;
+	}
+	return false;
+}
+
+bool ParseWildStartLayout(const char* value, u32& outLayout)
+{
+	if (!value)
+		return false;
+	char token[24];
+	size_t len = strlen(value);
+	if ((len == 0) || (len >= sizeof(token)))
+		return false;
+	for (size_t i = 0; i < len; i++)
+		token[i] = (char)tolower((u8)value[i]);
+	token[len] = 0;
+	if (strcmp(token, "random") == 0)
+	{
+		outLayout = WILD_START_RANDOM;
+		return true;
+	}
+	if (strcmp(token, "stratified") == 0)
+	{
+		outLayout = WILD_START_STRATIFIED;
 		return true;
 	}
 	return false;
@@ -157,6 +240,44 @@ void GenDefaultSessionTag()
 	snprintf(gSessionTag, sizeof(gSessionTag), "s%llu_%d", (unsigned long long)now, pid);
 }
 
+void AppendAutoWildSessionSuffix()
+{
+	if (gSessionTagProvided)
+		return;
+	if (gDpExportMode != DP_EXPORT_WILD)
+		return;
+
+	const char* family = "l";
+	if (gWildFamily == WILD_FAMILY_MIX64A)
+		family = "a";
+	else if (gWildFamily == WILD_FAMILY_MIX64B)
+		family = "b";
+	else if (gWildFamily == WILD_FAMILY_MIX64C)
+		family = "c";
+
+	char suffix[96];
+	if (gWildStartLayout == WILD_START_STRATIFIED)
+		snprintf(suffix, sizeof(suffix), "wf%s_ws%u_%u", family, gWildStartSlices, gWildStartSliceIndex);
+	else
+		snprintf(suffix, sizeof(suffix), "wf%s_wr", family);
+
+	char base[sizeof(gSessionTag)];
+	strncpy(base, gSessionTag, sizeof(base) - 1);
+	base[sizeof(base) - 1] = 0;
+	snprintf(gSessionTag, sizeof(gSessionTag), "%s_%s", base, suffix);
+}
+
+u64 GetWildFamilyJumpSeed()
+{
+	if ((gDpExportMode != DP_EXPORT_WILD) || (gWildFamily == WILD_FAMILY_LEGACY))
+		return 0;
+	if (gWildFamily == WILD_FAMILY_MIX64A)
+		return 0x9E3779B97F4A7C15ull;
+	if (gWildFamily == WILD_FAMILY_MIX64B)
+		return 0xD1B54A32D192ED03ull;
+	return 0x94D049BB133111EBull;
+}
+
 void OnSignal(int sig)
 {
 	(void)sig;
@@ -175,6 +296,10 @@ void PrintUsage()
 	printf("  -dpf-mode <wild|tame|both> -pubkey <hex> -start <hex> -range <bits> -dp <bits>\r\n");
 	printf("  -dpf-worker <id> -dpf-dir <path> [-dpf-session <tag>]\r\n");
 	printf("  [-dpf-flush-records <int>] [-dpf-flush-sec <int>]\r\n\r\n");
+	printf("Wild export tuning (only with -dpf-mode wild):\r\n");
+	printf("  -wild-family <legacy|mix64a|mix64b|mix64c>\r\n");
+	printf("  -wild-start-layout <random|stratified>\r\n");
+	printf("  -wild-start-slices <N> -wild-start-slice-index <I>\r\n\r\n");
 	printf("General options:\r\n");
 	printf("  -gpu <mask>                   Select GPUs, e.g. 035\r\n");
 	printf("  -h, --help                    Show this help\r\n\r\n");
@@ -524,7 +649,8 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 			printf("tames loading failed\r\n");
 	}
 
-	SetRndSeed(0); //use same seed to make tames from file compatible
+	// Keep legacy jump table seed for all existing modes; only export-wild non-legacy families switch seed.
+	SetRndSeed(GetWildFamilyJumpSeed());
 	PntTotalOps = 0;
 	PntIndex = 0;
 //prepare jumps
@@ -813,6 +939,66 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			ci++;
 		}
+		else if (strcmp(argument, "-wild-family") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-family option\r\n");
+				return false;
+			}
+			if (!ParseWildFamily(argv[ci], gWildFamily))
+			{
+				printf("error: invalid -wild-family value (expected: legacy, mix64a, mix64b, mix64c)\r\n");
+				return false;
+			}
+			ci++;
+		}
+		else if (strcmp(argument, "-wild-start-layout") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-start-layout option\r\n");
+				return false;
+			}
+			if (!ParseWildStartLayout(argv[ci], gWildStartLayout))
+			{
+				printf("error: invalid -wild-start-layout value (expected: random, stratified)\r\n");
+				return false;
+			}
+			ci++;
+		}
+		else if (strcmp(argument, "-wild-start-slices") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-start-slices option\r\n");
+				return false;
+			}
+			int val = atoi(argv[ci]);
+			ci++;
+			if ((val < 1) || (val > 4096))
+			{
+				printf("error: invalid value for -wild-start-slices option\r\n");
+				return false;
+			}
+			gWildStartSlices = (u32)val;
+		}
+		else if (strcmp(argument, "-wild-start-slice-index") == 0)
+		{
+			if (ci >= argc)
+			{
+				printf("error: missed value after -wild-start-slice-index option\r\n");
+				return false;
+			}
+			int val = atoi(argv[ci]);
+			ci++;
+			if ((val < 0) || (val > 4095))
+			{
+				printf("error: invalid value for -wild-start-slice-index option\r\n");
+				return false;
+			}
+			gWildStartSliceIndex = (u32)val;
+		}
 		else if (strcmp(argument, "-wild-only") == 0)
 		{
 			// Backward-compatible alias for older worker commands.
@@ -891,6 +1077,7 @@ bool ParseCommandLine(int argc, char* argv[])
 			}
 			strncpy(gSessionTag, argv[ci], sizeof(gSessionTag) - 1);
 			gSessionTag[sizeof(gSessionTag) - 1] = 0;
+			gSessionTagProvided = true;
 			ci++;
 		}
 		else
@@ -922,7 +1109,38 @@ bool ParseCommandLine(int argc, char* argv[])
 			printf("error: -dp-export/-dpf-mode requires -dpf-dir and -dpf-worker\r\n");
 			return false;
 		}
+		bool wildTuningRequested = (gWildFamily != WILD_FAMILY_LEGACY) || (gWildStartLayout != WILD_START_RANDOM) || (gWildStartSlices != 1) || (gWildStartSliceIndex != 0);
+		if (wildTuningRequested && (gDpExportMode != DP_EXPORT_WILD))
+		{
+			printf("error: wild tuning flags are only allowed with -dpf-mode wild\r\n");
+			return false;
+		}
+		if (gDpExportMode == DP_EXPORT_WILD)
+		{
+			if (gWildStartLayout == WILD_START_STRATIFIED)
+			{
+				if (!gWildStartSlices)
+				{
+					printf("error: stratified wild start requires -wild-start-slices >= 1\r\n");
+					return false;
+				}
+				if (gWildStartSliceIndex >= gWildStartSlices)
+				{
+					printf("error: -wild-start-slice-index must be in [0, slices-1]\r\n");
+					return false;
+				}
+			}
+			else
+			{
+				if ((gWildStartSlices != 1) || (gWildStartSliceIndex != 0))
+				{
+					printf("error: -wild-start-slices/-wild-start-slice-index require -wild-start-layout stratified\r\n");
+					return false;
+				}
+			}
+		}
 		GenDefaultSessionTag();
+		AppendAutoWildSessionSuffix();
 	}
 	if (gTamesFileName[0] && !IsFileExist(gTamesFileName))
 	{
@@ -978,10 +1196,15 @@ int main(int argc, char* argv[])
 	gGenMode = false;
 	gIsOpsLimit = false;
 	gDpExportMode = DP_EXPORT_NONE;
+	gWildFamily = WILD_FAMILY_LEGACY;
+	gWildStartLayout = WILD_START_RANDOM;
+	gWildStartSlices = 1;
+	gWildStartSliceIndex = 0;
 	gStopRequested = false;
 	gInterruptedStop = false;
 	gWildFlushRecords = 1000000;
 	gWildFlushSec = 10;
+	gSessionTagProvided = false;
 	memset(gGPUs_Mask, 1, sizeof(gGPUs_Mask));
 	if (!ParseCommandLine(argc, argv))
 		return 0;
@@ -1010,6 +1233,13 @@ int main(int argc, char* argv[])
 	{
 		printf("\r\nDP EXPORT MODE\r\n");
 		printf("DP export type: %s\r\n", GetDpExportModeName());
+		if (gDpExportMode == DP_EXPORT_WILD)
+		{
+			printf("Wild family: %s\r\n", GetWildFamilyName());
+			printf("Wild start layout: %s\r\n", GetWildStartLayoutName());
+			if (gWildStartLayout == WILD_START_STRATIFIED)
+				printf("Wild start slice: %u/%u\r\n", gWildStartSliceIndex, gWildStartSlices);
+		}
 		printf("Worker ID: %s\r\n", gWorkerId);
 		printf("Session tag: %s\r\n", gSessionTag);
 		printf("Spool dir: %s\r\n", gWildSpoolDir);

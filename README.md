@@ -73,6 +73,14 @@ CUDA_ARCH_LIST="120" make all
 
 <b>-dpf-flush-sec</b>	optional max seconds before flushing a partial `.wdp` chunk (default 10).
 
+<b>-wild-family</b>	optional wild-only jump selector family. Values: <code>legacy</code> (default), <code>mix64a</code>, <code>mix64b</code>, <code>mix64c</code>. Valid only with <code>-dpf-mode wild</code>.
+
+<b>-wild-start-layout</b>	optional wild-only start-distance layout. Values: <code>random</code> (default), <code>stratified</code>. Valid only with <code>-dpf-mode wild</code>.
+
+<b>-wild-start-slices</b>	optional number of stratified slices (1..4096). Valid only when <code>-wild-start-layout stratified</code> and <code>-dpf-mode wild</code>.
+
+<b>-wild-start-slice-index</b>	optional selected slice index (0..slices-1). Valid only when <code>-wild-start-layout stratified</code> and <code>-dpf-mode wild</code>.
+
 <b>-h</b>, <b>--help</b>		show CLI help.
 
 Compatibility aliases:
@@ -99,6 +107,10 @@ Then you can restart software with same parameters to see less K in benchmark mo
 Sample command for DP export (wild):
 
 RCKangaroo -dpf-mode wild -range 134 -dp 30 -start 0 -pubkey 03... -dpf-worker worker01 -dpf-dir /tmp/wildspool
+
+Sample command for DP export (wild with safe family/layout isolation):
+
+RCKangaroo -dpf-mode wild -range 134 -dp 30 -start 0 -pubkey 03... -dpf-worker worker01 -dpf-dir /tmp/wildspool -wild-family mix64a -wild-start-layout stratified -wild-start-slices 32 -wild-start-slice-index 5
 
 <b>Some notes:</b>
 
