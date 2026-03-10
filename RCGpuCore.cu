@@ -40,11 +40,11 @@ __device__ __forceinline__ u64 Mix64(u64 x)
 __device__ __forceinline__ u64 WildFamilySalt(u32 family)
 {
 	if (family == WILD_FAMILY_MIX64A)
-		return 0x9E3779B97F4A7C15ull;
+		return WILD_SALT_MIX64A;
 	if (family == WILD_FAMILY_MIX64B)
-		return 0xD1B54A32D192ED03ull;
+		return WILD_SALT_MIX64B;
 	if (family == WILD_FAMILY_MIX64C)
-		return 0x94D049BB133111EBull;
+		return WILD_SALT_MIX64C;
 	return 0ull;
 }
 
