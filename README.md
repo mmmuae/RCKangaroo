@@ -47,6 +47,13 @@ CUDA_ARCH_LIST="120" make all
 
 <b>Command line parameters:</b>
 
+<b>Runtime modes (selected by flags):</b>
+
+- <b>Benchmark mode</b>: no <code>-pubkey</code>, solver runs random points.
+- <b>Main solve mode</b>: <code>-pubkey + -start + -range + -dp</code>.
+- <b>Tames generation/load mode</b>: <code>-tames</code> (+ <code>-max</code> when generating).
+- <b>DP export mode</b>: <code>-dpf-mode ...</code>, writes `.wdp` chunks for orchestrator ingestion.
+
 <b>-gpu</b>		which GPUs are used, for example, "035" means that GPUs #0, #3 and #5 are used. If not specified, all available GPUs are used. 
 
 <b>-pubkey</b>		public key to solve, both compressed and uncompressed keys are supported. If not specified, software starts in benchmark mode and solves random keys. 
@@ -61,29 +68,51 @@ CUDA_ARCH_LIST="120" make all
 
 <b>-tames</b>		filename with tames. If file not found, software generates tames (option "-max" is required) and saves them to the file. If the file is found, software loads tames to speedup solving. 
 
-<b>-dpf-mode</b>		run worker in DP export mode (no local key solving path). Values: <code>wild</code>, <code>tame</code>, <code>both</code>.
+<b>DP export options:</b>
+
+<b>-dpf-mode</b>		run worker in DP export mode (no local key solving path). Values:
+- <code>wild</code>: export only type <code>1/2</code> records.
+- <code>tame</code>: export only type <code>0</code> records.
+- <code>both</code>: export type <code>0/1/2</code> records.
 
 <b>-dpf-dir</b>		required with DP export mode. Local directory where `.wdp` chunks are written.
 
 <b>-dpf-worker</b>		required with DP export mode. Worker identifier stored in every `.wdp` chunk.
 
 <b>-dpf-session</b>		optional session tag for `.wdp` filenames and metadata. Auto-generated if omitted.
+- If omitted and mode is <code>wild</code>, a suffix is appended automatically:
+  - random layout: <code>..._wfX_wr</code>
+  - stratified layout: <code>..._wfX_ws&lt;slices&gt;_&lt;index&gt;</code>
+  - family letter <code>X</code>: <code>l/a/b/c</code> for <code>legacy/mix64a/mix64b/mix64c</code>.
+- If provided explicitly, it is used as-is.
 
 <b>-dpf-flush-records</b>	optional chunk size in DP records for `.wdp` output (default 1000000).
 
 <b>-dpf-flush-sec</b>	optional max seconds before flushing a partial `.wdp` chunk (default 10).
 
-<b>-wild-family</b>	optional wild-only jump selector family. Values: <code>legacy</code> (default), <code>mix64a</code>, <code>mix64b</code>, <code>mix64c</code>. Valid only with <code>-dpf-mode wild</code>.
+<b>Wild-only tuning options (valid only with <code>-dpf-mode wild</code>):</b>
 
-<b>-wild-start-layout</b>	optional wild-only start-distance layout. Values: <code>random</code> (default), <code>stratified</code>. Valid only with <code>-dpf-mode wild</code>.
+<b>-wild-family</b>	optional jump-selector family:
+- <code>legacy</code> (default): legacy selector path.
+- <code>mix64a</code>, <code>mix64b</code>, <code>mix64c</code>: mixed selector variants for wild walk diversification.
+- This changes wild walk selection behavior only; WDP format and record schema are unchanged.
 
-<b>-wild-start-slices</b>	optional number of stratified slices (1..4096). Valid only when <code>-wild-start-layout stratified</code> and <code>-dpf-mode wild</code>.
+<b>-wild-start-layout</b>	optional wild start-distance layout:
+- <code>random</code> (default): existing random-even wild starts.
+- <code>stratified</code>: splits the wild half-domain into <code>N</code> slices and assigns this worker one slice.
 
-<b>-wild-start-slice-index</b>	optional selected slice index (0..slices-1). Valid only when <code>-wild-start-layout stratified</code> and <code>-dpf-mode wild</code>.
+<b>-wild-start-slices</b>	number of stratified slices (<code>1..4096</code>). Required with <code>stratified</code>.
+
+<b>-wild-start-slice-index</b>	selected slice index (<code>0..slices-1</code>). Required with <code>stratified</code>.
+
+<b>Validation rules enforced by CLI:</b>
+- Wild tuning flags are rejected unless <code>-dpf-mode wild</code>.
+- <code>stratified</code> requires valid <code>-wild-start-slices</code> and <code>-wild-start-slice-index</code>.
+- <code>random</code> requires slices/index to remain default (<code>1</code>/<code>0</code>).
 
 <b>-h</b>, <b>--help</b>		show CLI help.
 
-Compatibility aliases:
+<b>Compatibility aliases:</b>
 <code>-dp-export</code> -> <code>-dpf-mode</code>,
 <code>-wild-only</code> -> <code>-dpf-mode wild</code>,
 <code>-wild-spool-dir</code> -> <code>-dpf-dir</code>,
