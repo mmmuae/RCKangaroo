@@ -43,7 +43,7 @@ CUDA_LIB_DIRS := $(CUDA_PATH)/lib64 $(CUDA_PATH)/targets/x86_64-linux/lib
 CUDA_LIB_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-L$(d))
 CUDA_RPATH_FLAGS := $(foreach d,$(CUDA_LIB_DIRS),-Wl,-rpath,$(d))
 
-CCFLAGS := -O3 -I$(CUDA_PATH)/include
+CCFLAGS := -O3 -DNDEBUG -march=native -std=c++17 -I$(CUDA_PATH)/include
 
 # Prefer native GPU architectures, then fall back to nvcc supported list.
 NVCC_SUPPORTED_ARCH_LIST := $(strip $(shell $(NVCC) --list-gpu-arch 2>/dev/null | sed -n 's/^compute_//p' | tr '\n' ' '))
@@ -66,8 +66,13 @@ CUDA_ARCH_LIST := $(strip $(CUDA_ARCH_LIST))
 CUDA_ARCH_FLAGS := $(foreach arch,$(CUDA_ARCH_LIST),-gencode=arch=compute_$(arch),code=sm_$(arch))
 CUDA_PTX_ARCH := $(lastword $(CUDA_ARCH_LIST))
 CUDA_ARCH_FLAGS += -gencode=arch=compute_$(CUDA_PTX_ARCH),code=compute_$(CUDA_PTX_ARCH)
-NVCCFLAGS := -O3 $(CUDA_ARCH_FLAGS)
-LDFLAGS := $(CUDA_LIB_FLAGS) $(CUDA_RPATH_FLAGS) -lcudart -pthread
+NVCCFLAGS := -O3 -DNDEBUG -std=c++17 --use_fast_math --extra-device-vectorization --restrict --fmad=true -lineinfo -Xptxas=-dlcm=ca $(CUDA_ARCH_FLAGS) -Xcompiler=-O3,-DNDEBUG,-march=native
+CXX_LTO_FLAG := $(shell $(CXX) --help 2>/dev/null | grep -q -- "-flto" && echo -flto)
+ifeq ($(strip $(CXX_LTO_FLAG)),)
+CXX_LTO_FLAG :=
+endif
+CCFLAGS += $(CXX_LTO_FLAG)
+LDFLAGS := $(CUDA_LIB_FLAGS) $(CUDA_RPATH_FLAGS) $(CXX_LTO_FLAG) -lcudart -pthread
 
 CPU_SRC := RCKangaroo.cpp GpuKang.cpp Ec.cpp utils.cpp WildSpoolWriter.cpp
 GPU_SRC := RCGpuCore.cu

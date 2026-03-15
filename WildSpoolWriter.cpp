@@ -163,6 +163,7 @@ WildSpoolWriter::WildSpoolWriter()
 	flushSec = 10;
 	maxQueueRecords = 0;
 	chunkSeq = 1;
+	queuedRecords = 0;
 	stopRequested = false;
 	isRunning = false;
 	writtenRecords = 0;
@@ -205,6 +206,8 @@ bool WildSpoolWriter::Start(
 		std::lock_guard<std::mutex> lk(mtx);
 		queue.clear();
 		chunk.clear();
+		chunk.reserve(flushRecords);
+		queuedRecords = 0;
 		stopRequested = false;
 		isRunning = false;
 	}
@@ -229,20 +232,78 @@ void WildSpoolWriter::Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 dpT
 	rec.flags = 0;
 	rec.reserved = 0;
 
+	BatchBlock batch;
+	batch.records.push_back(rec);
+	batch.offset = 0;
+
 	std::unique_lock<std::mutex> lk(mtx);
 	if (!isRunning || stopRequested)
 	{
 		droppedRecords.fetch_add(1);
 		return;
 	}
-	while (queue.size() >= maxQueueRecords && !stopRequested)
+	while ((queuedRecords + chunk.size() + batch.records.size()) > maxQueueRecords && !stopRequested)
 		cvSpace.wait_for(lk, std::chrono::milliseconds(100));
 	if (stopRequested)
 	{
 		droppedRecords.fetch_add(1);
 		return;
 	}
-	queue.push_back(rec);
+	queuedRecords += batch.records.size();
+	queue.push_back(std::move(batch));
+	cvData.notify_one();
+}
+
+void WildSpoolWriter::EnqueueBatch(const u8* rawRecords, int recordCount, u32 exportMode)
+{
+	if (!rawRecords || (recordCount <= 0))
+		return;
+
+	BatchBlock batch;
+	batch.records.reserve(static_cast<size_t>(recordCount));
+	batch.offset = 0;
+
+	for (int i = 0; i < recordCount; ++i)
+	{
+		const u8* src = rawRecords + static_cast<size_t>(i) * GPU_DP_SIZE;
+		u8 type = src[40];
+		bool keep = false;
+		if (exportMode == DP_EXPORT_WILD)
+			keep = (type == WILD1) || (type == WILD2);
+		else if (exportMode == DP_EXPORT_TAME)
+			keep = (type == TAME);
+		else if (exportMode == DP_EXPORT_BOTH)
+			keep = (type == TAME) || (type == WILD1) || (type == WILD2);
+		if (!keep)
+			continue;
+
+		RawRecord rec;
+		memcpy(rec.xPrefix, src, sizeof(rec.xPrefix));
+		memcpy(rec.distanceRaw24, src + 16, sizeof(rec.distanceRaw24));
+		rec.dpType = type;
+		rec.flags = 0;
+		rec.reserved = 0;
+		batch.records.push_back(rec);
+	}
+
+	if (batch.records.empty())
+		return;
+
+	std::unique_lock<std::mutex> lk(mtx);
+	if (!isRunning || stopRequested)
+	{
+		droppedRecords.fetch_add(static_cast<u64>(batch.records.size()));
+		return;
+	}
+	while ((queuedRecords + chunk.size() + batch.records.size()) > maxQueueRecords && !stopRequested)
+		cvSpace.wait_for(lk, std::chrono::milliseconds(100));
+	if (stopRequested)
+	{
+		droppedRecords.fetch_add(static_cast<u64>(batch.records.size()));
+		return;
+	}
+	queuedRecords += batch.records.size();
+	queue.push_back(std::move(batch));
 	cvData.notify_one();
 }
 
@@ -282,7 +343,7 @@ u64 WildSpoolWriter::GetDroppedRecords() const
 u64 WildSpoolWriter::GetPendingRecords() const
 {
 	std::lock_guard<std::mutex> lk(mtx);
-	return static_cast<u64>(queue.size() + chunk.size());
+	return static_cast<u64>(queuedRecords + chunk.size());
 }
 
 bool WildSpoolWriter::EnsureSpoolDir()
@@ -301,8 +362,18 @@ void WildSpoolWriter::WriterLoop()
 			cvData.wait_for(lk, std::chrono::milliseconds(200), [&]() { return stopRequested || !queue.empty(); });
 			while (!queue.empty() && chunk.size() < flushRecords)
 			{
-				chunk.push_back(queue.front());
-				queue.pop_front();
+				BatchBlock& front = queue.front();
+				size_t available = front.records.size() - front.offset;
+				size_t needed = static_cast<size_t>(flushRecords) - chunk.size();
+				size_t take = std::min(available, needed);
+				chunk.insert(
+					chunk.end(),
+					front.records.begin() + static_cast<i64>(front.offset),
+					front.records.begin() + static_cast<i64>(front.offset + take));
+				front.offset += take;
+				queuedRecords -= take;
+				if (front.offset >= front.records.size())
+					queue.pop_front();
 			}
 			cvSpace.notify_all();
 

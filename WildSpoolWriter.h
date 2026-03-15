@@ -29,9 +29,10 @@ public:
 		const std::string& startOffset,
 		u32 rangeBits,
 		u32 dpBits,
-		u32 flushRecords,
-		u32 flushSec);
+			u32 flushRecords,
+			u32 flushSec);
 	void Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 dpType);
+	void EnqueueBatch(const u8* rawRecords, int recordCount, u32 exportMode);
 	void StopAndFlush();
 
 	u64 GetWrittenRecords() const;
@@ -49,6 +50,12 @@ private:
 		u16 reserved;
 	};
 
+	struct BatchBlock
+	{
+		std::vector<RawRecord> records;
+		size_t offset;
+	};
+
 	std::string spoolDir;
 	std::string workerId;
 	std::string sessionTag;
@@ -61,8 +68,9 @@ private:
 	size_t maxQueueRecords;
 	u64 chunkSeq;
 
-	std::deque<RawRecord> queue;
+	std::deque<BatchBlock> queue;
 	std::vector<RawRecord> chunk;
+	size_t queuedRecords;
 	mutable std::mutex mtx;
 	std::condition_variable cvData;
 	std::condition_variable cvSpace;

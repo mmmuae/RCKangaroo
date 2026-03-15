@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "cuda_runtime.h"
 #include "Ec.h"
 
 #define STATS_WND_SIZE	16
@@ -63,6 +64,8 @@ public:
 	int KangCnt;
 	bool Failed;
 	bool IsOldGpu;
+	int ComputeCapabilityMajor;
+	int ComputeCapabilityMinor;
 
 	int CalcKangCnt();
 	bool Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJumps1, EcJMP* _EcJumps2, EcJMP* _EcJumps3);

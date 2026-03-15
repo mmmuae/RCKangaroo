@@ -321,13 +321,15 @@ void InitGpus()
 
 		cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
 
-		GpuKangs[GpuCnt] = new RCGpuKang();
-		GpuKangs[GpuCnt]->CudaIndex = i;
-		GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
-		GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
-		GpuKangs[GpuCnt]->IsOldGpu = deviceProp.l2CacheSize < 16 * 1024 * 1024;
-		GpuCnt++;
-	}
+			GpuKangs[GpuCnt] = new RCGpuKang();
+			GpuKangs[GpuCnt]->CudaIndex = i;
+			GpuKangs[GpuCnt]->persistingL2CacheMaxSize = deviceProp.persistingL2CacheMaxSize;
+			GpuKangs[GpuCnt]->mpCnt = deviceProp.multiProcessorCount;
+			GpuKangs[GpuCnt]->IsOldGpu = deviceProp.l2CacheSize < 16 * 1024 * 1024;
+			GpuKangs[GpuCnt]->ComputeCapabilityMajor = deviceProp.major;
+			GpuKangs[GpuCnt]->ComputeCapabilityMinor = deviceProp.minor;
+			GpuCnt++;
+		}
 	printf("Total GPUs for work: %d\r\n", GpuCnt);
 }
 #ifdef _WIN32
@@ -418,21 +420,7 @@ void CheckNewPoints()
 
 	if (IsDpExportEnabled())
 	{
-		for (int i = 0; i < cnt; i++)
-		{
-			u8* p = pPntList2 + i * GPU_DP_SIZE;
-			u8 type = p[40];
-			bool keep = false;
-			if (gDpExportMode == DP_EXPORT_WILD)
-				keep = (type == WILD1) || (type == WILD2);
-			else if (gDpExportMode == DP_EXPORT_TAME)
-				keep = (type == TAME);
-			else if (gDpExportMode == DP_EXPORT_BOTH)
-				keep = (type == TAME) || (type == WILD1) || (type == WILD2);
-			if (!keep)
-				continue;
-			gWildWriter.Enqueue(p, p + 16, type);
-		}
+		gWildWriter.EnqueueBatch(pPntList2, cnt, gDpExportMode);
 		return;
 	}
 
