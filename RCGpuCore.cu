@@ -37,23 +37,25 @@ __device__ __forceinline__ u64 Mix64(u64 x)
 	return x;
 }
 
-__device__ __forceinline__ u64 WildFamilySalt(u32 family)
+template <u32 WildFamily>
+__device__ __forceinline__ u64 WildFamilySalt()
 {
-	if (family == WILD_FAMILY_MIX64A)
+	if constexpr (WildFamily == WILD_FAMILY_MIX64A)
 		return WILD_SALT_MIX64A;
-	if (family == WILD_FAMILY_MIX64B)
+	if constexpr (WildFamily == WILD_FAMILY_MIX64B)
 		return WILD_SALT_MIX64B;
-	if (family == WILD_FAMILY_MIX64C)
+	if constexpr (WildFamily == WILD_FAMILY_MIX64C)
 		return WILD_SALT_MIX64C;
 	return 0ull;
 }
 
-__device__ __forceinline__ u32 SelectJumpIndex(const TKparams& Kparams, const u64* x)
+template <u32 WildFamily>
+__device__ __forceinline__ u32 SelectJumpIndex(const u64* x)
 {
-	if ((Kparams.RunMode != KANG_MODE_EXPORT_WILD) || (Kparams.WildFamily == WILD_FAMILY_LEGACY))
+	if constexpr (WildFamily == WILD_FAMILY_LEGACY)
 		return (u32)(x[0] & JMP_MASK);
 	u64 h = x[0] ^ Rotl64(x[1], 17) ^ Rotl64(x[2], 31) ^ Rotl64(x[3], 47);
-	h ^= WildFamilySalt(Kparams.WildFamily);
+	h ^= WildFamilySalt<WildFamily>();
 	return (u32)(Mix64(h) & JMP_MASK);
 }
 
@@ -62,7 +64,8 @@ __device__ __forceinline__ u32 SelectJumpIndex(const TKparams& Kparams, const u6
 #ifndef OLD_GPU
 
 //this kernel performs main jumps
-extern "C" __launch_bounds__(BLOCK_SIZE, 1)
+template <u32 WildFamily>
+__launch_bounds__(BLOCK_SIZE, LAUNCH_BOUNDS_MINBLOCKS)
 __global__ void KernelA(const TKparams Kparams)
 {
 	u64* L2x = Kparams.L2 + 2 * THREAD_X + 4 * BLOCK_SIZE * BLOCK_X;
@@ -121,7 +124,7 @@ __global__ void KernelA(const TKparams Kparams)
 		
 		//first group
 		LOAD_VAL_256(x, L2x, 0);
-		jmp_ind = SelectJumpIndex(Kparams, x);
+		jmp_ind = SelectJumpIndex<WildFamily>(x);
 		jmp_table = ((L1S2 >> 0) & 1) ? jmp2_table : jmp1_table;
 		Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 		SubModP(inverse, x, jmp_x);
@@ -130,7 +133,7 @@ __global__ void KernelA(const TKparams Kparams)
 		for (int group = 1; group < PNT_GROUP_CNT; group++)
 		{
 			LOAD_VAL_256(x, L2x, group);
-			jmp_ind = SelectJumpIndex(Kparams, x);
+			jmp_ind = SelectJumpIndex<WildFamily>(x);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			SubModP(tmp, x, jmp_x);
@@ -148,7 +151,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			LOAD_VAL_256(x0, L2x, group);
             LOAD_VAL_256(y0, L2y, group);
-			jmp_ind = SelectJumpIndex(Kparams, x0);
+			jmp_ind = SelectJumpIndex<WildFamily>(x0);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			Copy_int4_x2(jmp_y, jmp_table + 8 * jmp_ind + 4);
@@ -183,7 +186,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			if (((L1S2 >> group) & 1) == 0) //normal mode, check L1S2 loop
 			{
-				u32 jmp_next = SelectJumpIndex(Kparams, x);
+				u32 jmp_next = SelectJumpIndex<WildFamily>(x);
 				jmp_next |= ((u32)y[0] & 1) ? 0 : INV_FLAG; //inverted
 				L1S2 |= (jmp_ind == jmp_next) ? (1u << group) : 0; //loop L1S2 detected
 			}
@@ -245,7 +248,8 @@ __global__ void KernelA(const TKparams Kparams)
 
 //this kernel performs main jumps for old cards
 //not good but works
-extern "C" __launch_bounds__(BLOCK_SIZE, 1)
+template <u32 WildFamily>
+__launch_bounds__(BLOCK_SIZE, LAUNCH_BOUNDS_MINBLOCKS)
 __global__ void KernelA(const TKparams Kparams)
 {
 	__align__(16) u64 Lx[4 * PNT_GROUP_CNT];
@@ -304,7 +308,7 @@ __global__ void KernelA(const TKparams Kparams)
 	for (int group = 0; group < PNT_GROUP_CNT; group++)
 	{
 		LOAD_VAL_256_m(x, Lx, group);
-		jmp_ind = SelectJumpIndex(Kparams, x);
+		jmp_ind = SelectJumpIndex<WildFamily>(x);
 		jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 		Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 		SubModP(tmp, x, jmp_x);
@@ -352,7 +356,7 @@ __global__ void KernelA(const TKparams Kparams)
 			}
 			LOAD_VAL_256_m(y0, Ly, group);
 
-			jmp_ind = SelectJumpIndex(Kparams, x0);
+			jmp_ind = SelectJumpIndex<WildFamily>(x0);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			if (cached)
 			{
@@ -393,7 +397,7 @@ __global__ void KernelA(const TKparams Kparams)
 					LOAD_VAL_256_m(t_cache, Ls, (group + g_inc + g_inc) / 2);
 					cached = true;				
 					LOAD_VAL_256_m(x0_cache, Lx, group + g_inc);
-					u32 jmp_tmp = SelectJumpIndex(Kparams, x0_cache);
+					u32 jmp_tmp = SelectJumpIndex<WildFamily>(x0_cache);
 					__align__(16) u64 dx2[4];
 					u64* jmp_table_tmp = ((L1S2 >> (group + g_inc)) & 1) ? jmp2_table : jmp1_table;
 					Copy_int4_x2(jmpx_cached, jmp_table_tmp + 8 * jmp_tmp);
@@ -421,7 +425,7 @@ __global__ void KernelA(const TKparams Kparams)
 
 			if (((L1S2 >> group) & 1) == 0) //normal mode, check L1S2 loop
 			{
-				u32 jmp_next = SelectJumpIndex(Kparams, x);
+				u32 jmp_next = SelectJumpIndex<WildFamily>(x);
 				jmp_next |= ((u32)y[0] & 1) ? 0 : INV_FLAG; //inverted
 				L1S2 |= (jmp_ind == jmp_next) ? (1ull << group) : 0; //loop L1S2 detected
 			}
@@ -455,7 +459,7 @@ __global__ void KernelA(const TKparams Kparams)
 			}
 		
 			//preps to calc next inv
-			jmp_ind = SelectJumpIndex(Kparams, x);
+			jmp_ind = SelectJumpIndex<WildFamily>(x);
 			jmp_table = ((L1S2 >> group) & 1) ? jmp2_table : jmp1_table;
 			Copy_int4_x2(jmp_x, jmp_table + 8 * jmp_ind);
 			SubModP(dx, x, jmp_x);
@@ -611,7 +615,8 @@ __device__ __forceinline__ bool ProcessJumpDistance(u32 step_ind, u32 d_cur, u64
 // Since we lose kangs gradually, for a year we lose 0.19/2 = 0.1% of speed, so you should catch L1S12 only if you are going to solve same point for decades.
 // Or you can check all kangs for L1S12 on CPU once a day and restart looped kangs.
 // Level2 loops are very rare and they have even size too so they will be handled by the same code. We don't know what loop level we catch so we use JmpTable3 for escaping.
-extern "C" __launch_bounds__(BLOCK_SIZE, 1)
+template <u32 WildFamily>
+__launch_bounds__(BLOCK_SIZE, LAUNCH_BOUNDS_MINBLOCKS)
 __global__ void KernelB(const TKparams Kparams)
 {
 	u64* jmp1_d = LDS; //16KB, 192bit jumps
@@ -705,7 +710,8 @@ __global__ void KernelB(const TKparams Kparams)
 }
 
 //this kernel performes single jump3 for looped kangs
-extern "C" __launch_bounds__(BLOCK_SIZE, 1)
+template <u32 WildFamily>
+__launch_bounds__(BLOCK_SIZE, LAUNCH_BOUNDS_MINBLOCKS)
 __global__ void KernelC(const TKparams Kparams)
 {
 	u64* jmp3_table = LDS; //48KB
@@ -753,7 +759,7 @@ __global__ void KernelC(const TKparams Kparams)
 		LOAD_VAL_256(x0, x_last, gr_ind);
 		LOAD_VAL_256(y0, y_last, gr_ind);
 
-		u32 jmp_ind = SelectJumpIndex(Kparams, x0);
+		u32 jmp_ind = SelectJumpIndex<WildFamily>(x0);
 		Copy_int4_x2(jmp_x, jmp3_table + 12 * jmp_ind);
 		Copy_int4_x2(jmp_y, jmp3_table + 12 * jmp_ind + 4);
 		SubModP(inverse, x0, jmp_x);
@@ -850,7 +856,7 @@ __device__ __forceinline__ void DoublePoint(u64* res_x, u64* res_y, u64* pntx, u
 }
 
 //this kernel calculates start points of kangs
-extern "C" __launch_bounds__(BLOCK_SIZE, 1)
+extern "C" __launch_bounds__(BLOCK_SIZE, LAUNCH_BOUNDS_MINBLOCKS)
 __global__ void KernelGen(const TKparams Kparams)
 {
 	for (u32 group = 0; group < PNT_GROUP_CNT; group++)
@@ -936,27 +942,70 @@ __global__ void KernelGen(const TKparams Kparams)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void CallGpuKernelABC(TKparams Kparams)
+template <u32 WildFamily>
+static void LaunchGpuKernelABCFamily(TKparams Kparams, cudaStream_t stream)
 {
-	KernelA <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size >>> (Kparams);
-	KernelB <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size >>> (Kparams);
-	KernelC <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size >>> (Kparams);
+	KernelA<WildFamily> <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelA_LDS_Size, stream >>> (Kparams);
+	KernelB<WildFamily> <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelB_LDS_Size, stream >>> (Kparams);
+	KernelC<WildFamily> <<< Kparams.BlockCnt, Kparams.BlockSize, Kparams.KernelC_LDS_Size, stream >>> (Kparams);
 }
 
-void CallGpuKernelGen(TKparams Kparams)
+template <u32 WildFamily>
+static cudaError_t ConfigureKernelFamily(TKparams Kparams)
 {
-	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0 >> > (Kparams);
+	cudaError_t err = cudaFuncSetAttribute(KernelA<WildFamily>, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelA_LDS_Size);
+	if (err != cudaSuccess)
+		return err;
+	err = cudaFuncSetAttribute(KernelB<WildFamily>, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelB_LDS_Size);
+	if (err != cudaSuccess)
+		return err;
+	err = cudaFuncSetAttribute(KernelC<WildFamily>, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelC_LDS_Size);
+	return err;
+}
+
+static u32 EffectiveWildFamily(const TKparams& Kparams)
+{
+	if (Kparams.RunMode != KANG_MODE_EXPORT_WILD)
+		return WILD_FAMILY_LEGACY;
+	return Kparams.WildFamily;
+}
+
+void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream)
+{
+	switch (EffectiveWildFamily(Kparams))
+	{
+	case WILD_FAMILY_MIX64A:
+		LaunchGpuKernelABCFamily<WILD_FAMILY_MIX64A>(Kparams, stream);
+		break;
+	case WILD_FAMILY_MIX64B:
+		LaunchGpuKernelABCFamily<WILD_FAMILY_MIX64B>(Kparams, stream);
+		break;
+	case WILD_FAMILY_MIX64C:
+		LaunchGpuKernelABCFamily<WILD_FAMILY_MIX64C>(Kparams, stream);
+		break;
+	default:
+		LaunchGpuKernelABCFamily<WILD_FAMILY_LEGACY>(Kparams, stream);
+		break;
+	}
+}
+
+void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream)
+{
+	KernelGen << < Kparams.BlockCnt, Kparams.BlockSize, 0, stream >> > (Kparams);
 }
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table)
 {
-	cudaError_t err = cudaFuncSetAttribute(KernelA, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelA_LDS_Size);
+	cudaError_t err = ConfigureKernelFamily<WILD_FAMILY_LEGACY>(Kparams);
 	if (err != cudaSuccess)
 		return err;
-	err = cudaFuncSetAttribute(KernelB, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelB_LDS_Size);
+	err = ConfigureKernelFamily<WILD_FAMILY_MIX64A>(Kparams);
 	if (err != cudaSuccess)
 		return err;
-	err = cudaFuncSetAttribute(KernelC, cudaFuncAttributeMaxDynamicSharedMemorySize, Kparams.KernelC_LDS_Size);
+	err = ConfigureKernelFamily<WILD_FAMILY_MIX64B>(Kparams);
+	if (err != cudaSuccess)
+		return err;
+	err = ConfigureKernelFamily<WILD_FAMILY_MIX64C>(Kparams);
 	if (err != cudaSuccess)
 		return err;
 	err = cudaMemcpyToSymbol(jmp2_table, _jmp2_table, JMP_CNT * 64);

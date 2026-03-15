@@ -9,10 +9,11 @@
 #include "cuda.h"
 
 #include "GpuKang.h"
+#include "WildSpoolWriter.h"
 
 cudaError_t cuSetGpuParams(TKparams Kparams, u64* _jmp2_table);
-void CallGpuKernelGen(TKparams Kparams);
-void CallGpuKernelABC(TKparams Kparams);
+void CallGpuKernelGen(TKparams Kparams, cudaStream_t stream);
+void CallGpuKernelABC(TKparams Kparams, cudaStream_t stream);
 void AddPointsToList(u32* data, int cnt, u64 ops_cnt);
 extern bool gGenMode; //tames generation mode
 extern u32 gDpExportMode;
@@ -20,6 +21,13 @@ extern u32 gWildFamily;
 extern u32 gWildStartLayout;
 extern u32 gWildStartSlices;
 extern u32 gWildStartSliceIndex;
+extern WildSpoolWriter gWildWriter;
+
+static bool IsBlackwellCap(int major, int minor)
+{
+	(void)minor;
+	return major >= 12;
+}
 
 static bool EcIntGetBit(const EcInt& value, int bitIndex)
 {
@@ -91,8 +99,21 @@ static void GenerateStratifiedWildDistance(EcInt& out, EcInt& upperExclusive, u3
 int RCGpuKang::CalcKangCnt()
 {
 	Kparams.BlockCnt = mpCnt;
-	Kparams.BlockSize = IsOldGpu ? 512 : 256;
-	Kparams.GroupCnt = IsOldGpu ? 64 : 24;
+	if (IsOldGpu)
+	{
+		Kparams.BlockSize = BLOCK_SIZE_OLD_GPU;
+		Kparams.GroupCnt = PNT_GROUP_OLD_GPU;
+	}
+	else if (IsBlackwellCap(ComputeCapabilityMajor, ComputeCapabilityMinor))
+	{
+		Kparams.BlockSize = BLOCK_SIZE_BLACKWELL;
+		Kparams.GroupCnt = PNT_GROUP_BLACKWELL;
+	}
+	else
+	{
+		Kparams.BlockSize = BLOCK_SIZE_NEW_GPU;
+		Kparams.GroupCnt = PNT_GROUP_NEW_GPU;
+	}
 	return Kparams.BlockSize* Kparams.GroupCnt* Kparams.BlockCnt;
 }
 
@@ -108,18 +129,37 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	StopFlag = false;
 	Failed = false;
 	u64 total_mem = 0;
+	memset(&Kparams, 0, sizeof(Kparams));
 	memset(dbg, 0, sizeof(dbg));
 	memset(SpeedStats, 0, sizeof(SpeedStats));
 	cur_stats_ind = 0;
+	RndPnts = NULL;
+	DPs_out = NULL;
 
 	cudaError_t err;
 	err = cudaSetDevice(CudaIndex);
 	if (err != cudaSuccess)
 		return false;
+	err = cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte);
+	if (err != cudaSuccess)
+		return false;
 
 	Kparams.BlockCnt = mpCnt;
-	Kparams.BlockSize = IsOldGpu ? BLOCK_SIZE_OLD_GPU : BLOCK_SIZE_NEW_GPU;
-	Kparams.GroupCnt = IsOldGpu ? PNT_GROUP_OLD_GPU : PNT_GROUP_NEW_GPU;
+	if (IsOldGpu)
+	{
+		Kparams.BlockSize = BLOCK_SIZE_OLD_GPU;
+		Kparams.GroupCnt = PNT_GROUP_OLD_GPU;
+	}
+	else if (IsBlackwellCap(ComputeCapabilityMajor, ComputeCapabilityMinor))
+	{
+		Kparams.BlockSize = BLOCK_SIZE_BLACKWELL;
+		Kparams.GroupCnt = PNT_GROUP_BLACKWELL;
+	}
+	else
+	{
+		Kparams.BlockSize = BLOCK_SIZE_NEW_GPU;
+		Kparams.GroupCnt = PNT_GROUP_NEW_GPU;
+	}
 	KangCnt = Kparams.BlockSize * Kparams.GroupCnt * Kparams.BlockCnt;
 	Kparams.KangCnt = KangCnt;
 	Kparams.DP = DP;
@@ -148,7 +188,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		Kparams.WildStartSliceIndex = gWildStartSliceIndex;
 	}
 
-//allocate gpu mem
+	//allocate gpu mem
 	u64 size;
 	if (!IsOldGpu)
 	{
@@ -166,7 +206,8 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 			size = persistingL2CacheMaxSize;
 		err = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size); // set max allowed size for L2
 		//persisting for L2
-		cudaStreamAttrValue stream_attribute;                                                   
+		cudaStreamAttrValue stream_attribute;
+		memset(&stream_attribute, 0, sizeof(stream_attribute));
 		stream_attribute.accessPolicyWindow.base_ptr = Kparams.L2;
 		stream_attribute.accessPolicyWindow.num_bytes = size;										
 		stream_attribute.accessPolicyWindow.hitRatio = 1.0;                                     
@@ -185,6 +226,12 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 	if (err != cudaSuccess)
 	{
 		printf("GPU %d Allocate GpuOut memory failed: %s\n", CudaIndex, cudaGetErrorString(err));
+		return false;
+	}
+	DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
+	if (DPs_out == NULL)
+	{
+		printf("GPU %d Allocate host DP buffer failed\n", CudaIndex);
 		return false;
 	}
 
@@ -283,9 +330,7 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 		return false;
 	}
 
-	DPs_out = (u32*)malloc(MAX_DP_CNT * GPU_DP_SIZE);
-
-//jmp1
+	//jmp1
 	u64* buf = (u64*)malloc(JMP_CNT * 96);
 	for (int i = 0; i < JMP_CNT; i++)
 	{
@@ -349,22 +394,38 @@ bool RCGpuKang::Prepare(EcPoint _PntToSolve, int _Range, int _DP, EcJMP* _EcJump
 
 void RCGpuKang::Release()
 {
-	free(RndPnts);
-	free(DPs_out);
-	cudaFree(Kparams.LoopedKangs);
-	cudaFree(Kparams.dbg_buf);
-	cudaFree(Kparams.LoopTable);
-	cudaFree(Kparams.LastPnts);
-	cudaFree(Kparams.L1S2);
-	cudaFree(Kparams.DPTable);
-	cudaFree(Kparams.JumpsList);
-	cudaFree(Kparams.Jumps3);
-	cudaFree(Kparams.Jumps2);
-	cudaFree(Kparams.Jumps1);
-	cudaFree(Kparams.Kangs);
-	cudaFree(Kparams.DPs_out);
-	if (!IsOldGpu)
+	if (RndPnts)
+		free(RndPnts);
+	if (DPs_out)
+		free(DPs_out);
+	if (Kparams.LoopedKangs)
+		cudaFree(Kparams.LoopedKangs);
+	if (Kparams.dbg_buf)
+		cudaFree(Kparams.dbg_buf);
+	if (Kparams.LoopTable)
+		cudaFree(Kparams.LoopTable);
+	if (Kparams.LastPnts)
+		cudaFree(Kparams.LastPnts);
+	if (Kparams.L1S2)
+		cudaFree(Kparams.L1S2);
+	if (Kparams.DPTable)
+		cudaFree(Kparams.DPTable);
+	if (Kparams.JumpsList)
+		cudaFree(Kparams.JumpsList);
+	if (Kparams.Jumps3)
+		cudaFree(Kparams.Jumps3);
+	if (Kparams.Jumps2)
+		cudaFree(Kparams.Jumps2);
+	if (Kparams.Jumps1)
+		cudaFree(Kparams.Jumps1);
+	if (Kparams.Kangs)
+		cudaFree(Kparams.Kangs);
+	if (Kparams.DPs_out)
+		cudaFree(Kparams.DPs_out);
+	if (!IsOldGpu && Kparams.L2)
 		cudaFree(Kparams.L2);
+	DPs_out = NULL;
+	memset(&Kparams, 0, sizeof(Kparams));
 }
 
 void RCGpuKang::Stop()
@@ -509,17 +570,19 @@ bool RCGpuKang::Start()
 		printf("GPU %d, cudaMemcpy failed: %s\n", CudaIndex, cudaGetErrorString(err));
 		return false;
 	}
-	CallGpuKernelGen(Kparams);
+	CallGpuKernelGen(Kparams, NULL);
 
 	err = cudaMemset(Kparams.L1S2, 0, mpCnt * Kparams.BlockSize * 8);
 	if (err != cudaSuccess)
 		return false;
-	cudaMemset(Kparams.dbg_buf, 0, 1024);
-	cudaMemset(Kparams.LoopTable, 0, KangCnt * MD_LEN * sizeof(u64));
-	return true;
+	err = cudaMemset(Kparams.dbg_buf, 0, 1024);
+	if (err != cudaSuccess)
+		return false;
+	err = cudaMemset(Kparams.LoopTable, 0, KangCnt * MD_LEN * sizeof(u64));
+	return err == cudaSuccess;
 }
 
-#ifdef DEBUG_MODE
+	#ifdef DEBUG_MODE
 int RCGpuKang::Dbg_CheckKangs()
 {
 	int kang_size = mpCnt * Kparams.BlockSize * Kparams.GroupCnt * 96;
@@ -570,79 +633,75 @@ void RCGpuKang::Execute()
 		gTotalErrors++;
 		return;
 	}
-#ifdef DEBUG_MODE
-	u64 iter = 1;
-#endif
-	cudaError_t err;	
-	while (!StopFlag)
-	{
-		u64 t1 = GetTickCount64();
-		cudaMemset(Kparams.DPs_out, 0, 4);
-		cudaMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32));
-		cudaMemset(Kparams.LoopedKangs, 0, 8);
-		CallGpuKernelABC(Kparams);
-		int cnt;
-		err = cudaMemcpy(&cnt, Kparams.DPs_out, 4, cudaMemcpyDeviceToHost);
-		if (err != cudaSuccess)
+	#ifdef DEBUG_MODE
+		u64 iter = 1;
+	#endif
+		cudaError_t err;
+		while (!StopFlag)
 		{
-			printf("GPU %d, CallGpuKernel failed: %s\r\n", CudaIndex, cudaGetErrorString(err));
-			gTotalErrors++;
-			break;
-		}
-		
-		if (cnt >= MAX_DP_CNT)
-		{
-			cnt = MAX_DP_CNT;
-			printf("GPU %d, gpu DP buffer overflow, some points lost, increase DP value!\r\n", CudaIndex);
-		}
-		u64 pnt_cnt = (u64)KangCnt * STEP_CNT;
-
-		if (cnt)
-		{
-			err = cudaMemcpy(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, cudaMemcpyDeviceToHost);
+			u64 t1 = GetTickCount64();
+			cudaMemset(Kparams.DPs_out, 0, 4);
+			cudaMemset(Kparams.DPTable, 0, KangCnt * sizeof(u32));
+			cudaMemset(Kparams.LoopedKangs, 0, 8);
+			CallGpuKernelABC(Kparams, NULL);
+			int cnt;
+			err = cudaMemcpy(&cnt, Kparams.DPs_out, 4, cudaMemcpyDeviceToHost);
 			if (err != cudaSuccess)
 			{
+				printf("GPU %d, CallGpuKernel failed: %s\r\n", CudaIndex, cudaGetErrorString(err));
 				gTotalErrors++;
 				break;
 			}
-			AddPointsToList(DPs_out, cnt, (u64)KangCnt * STEP_CNT);
-		}
 
-		//dbg
-		cudaMemcpy(dbg, Kparams.dbg_buf, 1024, cudaMemcpyDeviceToHost);
-
-		u32 lcnt;
-		cudaMemcpy(&lcnt, Kparams.LoopedKangs, 4, cudaMemcpyDeviceToHost);
-		//printf("GPU %d, Looped: %d\r\n", CudaIndex, lcnt);
-
-		u64 t2 = GetTickCount64();
-		u64 tm = t2 - t1;
-		if (!tm)
-			tm = 1;
-		int cur_speed = (int)(pnt_cnt / (tm * 1000));
-		//printf("GPU %d kernel time %d ms, speed %d MH\r\n", CudaIndex, (int)tm, cur_speed);
-
-		SpeedStats[cur_stats_ind] = cur_speed;
-		cur_stats_ind = (cur_stats_ind + 1) % STATS_WND_SIZE;
-
-#ifdef DEBUG_MODE
-		if ((iter % 300) == 0)
-		{
-			int corr_cnt = Dbg_CheckKangs();
-			if (corr_cnt)
+			if (cnt >= MAX_DP_CNT)
 			{
+				cnt = MAX_DP_CNT;
+				printf("GPU %d, gpu DP buffer overflow, some points lost, increase DP value!\r\n", CudaIndex);
+			}
+			u64 pnt_cnt = (u64)KangCnt * STEP_CNT;
+
+			if (cnt)
+			{
+				err = cudaMemcpy(DPs_out, Kparams.DPs_out + 4, cnt * GPU_DP_SIZE, cudaMemcpyDeviceToHost);
+				if (err != cudaSuccess)
+				{
+					gTotalErrors++;
+					break;
+				}
+				if (gDpExportMode != DP_EXPORT_NONE)
+					gWildWriter.EnqueueBatch(reinterpret_cast<const u8*>(DPs_out), cnt, gDpExportMode);
+				else
+					AddPointsToList(DPs_out, cnt, pnt_cnt);
+			}
+
+			u64 t2 = GetTickCount64();
+			u64 tm = t2 - t1;
+			if (!tm)
+				tm = 1;
+			int cur_speed = (int)(pnt_cnt / (tm * 1000));
+
+			SpeedStats[cur_stats_ind] = cur_speed;
+			cur_stats_ind = (cur_stats_ind + 1) % STATS_WND_SIZE;
+
+	#ifdef DEBUG_MODE
+			if ((iter % 300) == 0)
+			{
+				cudaMemcpy(dbg, Kparams.dbg_buf, 1024, cudaMemcpyDeviceToHost);
+				int corr_cnt = Dbg_CheckKangs();
+				if (corr_cnt)
+				{
 				printf("DBG: GPU %d, KANGS CORRUPTED: %d\r\n", CudaIndex, corr_cnt);
 				gTotalErrors++;
 			}
 			else
 				printf("DBG: GPU %d, ALL KANGS OK!\r\n", CudaIndex);
 		}
-		iter++;
-#endif
-	}
+			iter++;
+	#endif
+		}
 
-	Release();
-}
+		Release();
+	}
 
 int RCGpuKang::GetStatsSpeed()
 {
