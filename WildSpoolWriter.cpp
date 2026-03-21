@@ -27,6 +27,7 @@
 namespace
 {
 static const u32 WDP_VERSION = 1;
+static const u8 WDP_DISTANCE_ENCODING_SIGNED_LE_INT192_V1 = 0x01;
 static const size_t WDP_WORKER_ID_LEN = 64;
 static const size_t WDP_SESSION_TAG_LEN = 64;
 static const size_t WDP_TARGET_PUBKEY_LEN = 132;
@@ -229,7 +230,7 @@ void WildSpoolWriter::Enqueue(const u8* xPrefix, const u8* distanceRaw24, u8 dpT
 	memcpy(rec.xPrefix, xPrefix, sizeof(rec.xPrefix));
 	memcpy(rec.distanceRaw24, distanceRaw24, sizeof(rec.distanceRaw24));
 	rec.dpType = dpType;
-	rec.flags = 0;
+	rec.flags = WDP_DISTANCE_ENCODING_SIGNED_LE_INT192_V1;
 	rec.reserved = 0;
 
 	BatchBlock batch;
@@ -281,7 +282,7 @@ void WildSpoolWriter::EnqueueBatch(const u8* rawRecords, int recordCount, u32 ex
 		memcpy(rec.xPrefix, src, sizeof(rec.xPrefix));
 		memcpy(rec.distanceRaw24, src + 16, sizeof(rec.distanceRaw24));
 		rec.dpType = type;
-		rec.flags = 0;
+		rec.flags = WDP_DISTANCE_ENCODING_SIGNED_LE_INT192_V1;
 		rec.reserved = 0;
 		batch.records.push_back(rec);
 	}
