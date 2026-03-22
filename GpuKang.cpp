@@ -500,6 +500,15 @@ bool RCGpuKang::Start()
 	PntB = PntA;
 	PntB.y.NegModP();
 
+	// Safety: if PntA is the point at infinity (target is exactly at
+	// HalfRange), the GPU kernels cannot handle it.  SolvePoint should
+	// have already caught this trivial case, but guard here just in case.
+	if (PntA.IsInfinity())
+	{
+		printf("GPU %d: PntA is the identity point; cannot start kangaroo search\r\n", CudaIndex);
+		return false;
+	}
+
 	RndPnts = (TPointPriv*)malloc(KangCnt * 96);
 	GenerateRndDistances();
 /* 
