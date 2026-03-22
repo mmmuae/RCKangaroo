@@ -40,6 +40,17 @@ bool EcPoint::IsEqual(EcPoint& pnt)
 	return this->x.IsEqual(pnt.x) && this->y.IsEqual(pnt.y);
 }
 
+bool EcPoint::IsInfinity()
+{
+	return x.IsZero() && y.IsZero();
+}
+
+void EcPoint::SetInfinity()
+{
+	x.SetZero();
+	y.SetZero();
+}
+
 void EcPoint::LoadFromBuffer64(u8* buffer)
 {
 	memcpy(x.data, buffer, 32);
@@ -140,6 +151,23 @@ void DeInitEc()
 EcPoint Ec::AddPoints(EcPoint& pnt1, EcPoint& pnt2)
 {
 	EcPoint res;
+
+	// Handle identity element: O + P = P, P + O = P
+	if (pnt1.IsInfinity())
+		return pnt2;
+	if (pnt2.IsInfinity())
+		return pnt1;
+
+	// Same x-coordinate: either P + (-P) = O, or P + P (doubling)
+	if (pnt1.x.IsEqual(pnt2.x))
+	{
+		if (pnt1.y.IsEqual(pnt2.y))
+			return Ec::DoublePoint(pnt1);
+		// P + (-P) = O (point at infinity)
+		res.SetInfinity();
+		return res;
+	}
+
 	EcInt dx, dy, lambda, lambda2;
 
 	dx = pnt2.x;

@@ -646,6 +646,25 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	Pnt_HalfRange = ec.MultiplyG(Int_HalfRange);
 	Pnt_NegHalfRange = Pnt_HalfRange;
 	Pnt_NegHalfRange.y.NegModP();
+
+	// Edge case: if PntToSolve is exactly at HalfRange, PntA would be the
+	// point at infinity and the kangaroo search cannot proceed.  Detect this
+	// and return the trivial solution directly.
+	if (PntToSolve.x.IsEqual(Pnt_HalfRange.x))
+	{
+		if (PntToSolve.y.IsEqual(Pnt_HalfRange.y))
+		{
+			printf("Target is exactly at HalfRange, solved trivially.\r\n");
+			*pk_res = Int_HalfRange;
+			return true;
+		}
+		if (PntToSolve.y.IsEqual(Pnt_NegHalfRange.y))
+		{
+			printf("Target is at -HalfRange (not in search range), cannot solve.\r\n");
+			return false;
+		}
+	}
+
 	Int_TameOffset.Set(1);
 	Int_TameOffset.ShiftLeft(Range - 1);
 	EcInt tt;
@@ -723,6 +742,12 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 	{
 		db.Clear();
 		return !gInterruptedStop;
+	}
+
+	if (gInterruptedStop && !gSolved)
+	{
+		db.Clear();
+		return false;
 	}
 
 	if (gIsOpsLimit)
@@ -1252,7 +1277,7 @@ int main(int argc, char* argv[])
 
 		if (!SolvePoint(PntToSolve, gRange, gDP, &pk_found))
 		{
-			if (!gIsOpsLimit)
+			if (!gIsOpsLimit && !gInterruptedStop)
 				printf("FATAL ERROR: SolvePoint failed\r\n");
 			goto label_end;
 		}
@@ -1303,7 +1328,7 @@ int main(int argc, char* argv[])
 
 			if (!SolvePoint(PntToSolve, gRange, gDP, &pk_found))
 			{
-				if (!gIsOpsLimit)
+				if (!gIsOpsLimit && !gInterruptedStop)
 					printf("FATAL ERROR: SolvePoint failed\r\n");
 				break;
 			}

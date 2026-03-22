@@ -52,6 +52,8 @@ class EcPoint
 {
 public:
 	bool IsEqual(EcPoint& pnt);
+	bool IsInfinity(); // true when point represents the identity element (0,0)
+	void SetInfinity(); // set point to the identity element (0,0)
 	void LoadFromBuffer64(u8* buffer);
 	void SaveToBuffer64(u8* buffer);
 	bool SetHexStr(const char* str);
