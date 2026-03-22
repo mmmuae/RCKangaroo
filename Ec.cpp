@@ -152,7 +152,7 @@ EcPoint Ec::AddPoints(EcPoint& pnt1, EcPoint& pnt2)
 {
 	EcPoint res;
 
-	// Handle identity element: O + P = P, P + O = O
+	// Handle identity element: O + P = P, P + O = P
 	if (pnt1.IsInfinity())
 		return pnt2;
 	if (pnt2.IsInfinity())
