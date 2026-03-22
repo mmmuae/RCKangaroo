@@ -744,6 +744,12 @@ bool SolvePoint(EcPoint PntToSolve, int Range, int DP, EcInt* pk_res)
 		return !gInterruptedStop;
 	}
 
+	if (gInterruptedStop && !gSolved)
+	{
+		db.Clear();
+		return false;
+	}
+
 	if (gIsOpsLimit)
 	{
 		if (gGenMode)
@@ -1271,7 +1277,7 @@ int main(int argc, char* argv[])
 
 		if (!SolvePoint(PntToSolve, gRange, gDP, &pk_found))
 		{
-			if (!gIsOpsLimit)
+			if (!gIsOpsLimit && !gInterruptedStop)
 				printf("FATAL ERROR: SolvePoint failed\r\n");
 			goto label_end;
 		}
@@ -1322,7 +1328,7 @@ int main(int argc, char* argv[])
 
 			if (!SolvePoint(PntToSolve, gRange, gDP, &pk_found))
 			{
-				if (!gIsOpsLimit)
+				if (!gIsOpsLimit && !gInterruptedStop)
 					printf("FATAL ERROR: SolvePoint failed\r\n");
 				break;
 			}
